@@ -1,5 +1,6 @@
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
+const { getVersion} = window.__TAURI__.app;
 
 const $ = (s) => document.querySelector(s);
 const navItems = [...document.querySelectorAll(".navitem")];
@@ -89,6 +90,7 @@ function syncControls() {
   set($("#home"), settings.home);
   set($("#theme"), settings.theme);
   $("#savehist").setAttribute("aria-checked", String(settings.save_history));
+  $("#savesession").setAttribute("aria-checked", String(settings.save_session));
 }
 
 async function save(patch) {
@@ -102,6 +104,7 @@ $("#theme").onchange = (e) => save({ theme: e.target.value });
 $("#home").onchange = (e) => save({ home: e.target.value });
 $("#home").onkeydown = (e) => { if (e.key === "Enter") e.target.blur(); };
 $("#savehist").onclick = () => save({ save_history: !settings.save_history });
+$("#savesession").onclick = () => save({ save_session: !settings.save_session });
 
 // ---------- Navigation ----------
 
@@ -239,11 +242,24 @@ $("#manage").onclick = () => invoke("open_page", { url: "about:extensions" });
 
 // ---------- Events + startup ----------
 
+// ---------- Events + startup ----------
+
 listen("settings-changed", ({ payload }) => { settings = payload; syncControls(); });
 listen("history-updated", () => { if (!$("#pane-privacy").hidden) loadHistory(); });
 
 (async () => {
+  // fetch settings from json
   settings = await invoke("get_settings");
   syncControls();
   $("#wv").textContent = await invoke("about_webview");
+
+  // try to get app version if version field is loaded
+  try {
+    const { getVersion } = window.__TAURI__.app; 
+    const version = await getVersion();
+    const versionExists = $("#webviewer2-version");
+    if (versionExists) versionExists.innerText = version;
+  } catch (error) {
+    console.error("Failed to load app version:", error);
+  }
 })();

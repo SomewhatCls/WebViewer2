@@ -6,7 +6,7 @@ const CLOSE_SVG = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></sv
 const INTERNAL = new Set(["about:extensions", "about:settings", "about:new"]);
 
 // Mirrors the Rust `Settings`; replaced by the saved values at startup.
-let settings = { theme: "system", search: "duckduckgo", home: "about:new", save_history: true };
+let settings = { theme: "system", search: "duckduckgo", home: "about:new", save_history: true, save_session: false };
 
 function applyTheme() {
   const t = settings.theme;
@@ -175,7 +175,7 @@ function render() {
 
 //saves current tabs and window to json
 function saveSession() {
-  if (restoring || shuttingDown) return;
+  if (restoring || shuttingDown || !settings.save_session) return;
   const list = [...tabs]
     .map(([id, t]) => ({ id, url: shown(t.url) }))
     .filter((e) => e.url && !e.url.startsWith("chrome-search://"));
@@ -389,7 +389,7 @@ syncMax();
   try { launch = await invoke("take_launch_url"); } catch {}
   try { session = await invoke("load_session"); } catch {}
 
-  // Reopen the previous tabs one after another (parallel webview creation is riskier).
+  // Reopen the previous tabs one after another (parallel webview creation is risky).
   for (const u of session?.tabs ?? []) await openTab(u);
   const ids = [...tabs.keys()];
   if (ids.length) activate(ids[Math.min(session?.active ?? 0, ids.length - 1)]);

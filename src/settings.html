@@ -60,6 +60,10 @@
     <section class="pane" id="pane-privacy" hidden>
       <h2>Privacy and history</h2>
       <div class="card">
+        <div class="label"><strong>Save session</strong><span>If turned on, reopens tabs on restart.</span></div>
+        <button id="savesession" class="switch" role="switch" aria-checked="true" aria-label="Save session"></button>
+      </div>
+      <div class="card">
         <div class="label"><strong>Save browsing history</strong><span>Pages you visit, including searches, are listed below. Stored only on this device.</span></div>
         <button id="savehist" class="switch" role="switch" aria-checked="true" aria-label="Save browsing history"></button>
       </div>
@@ -91,8 +95,8 @@
     <section class="pane" id="pane-about" hidden>
       <h2>About</h2>
       <div class="card">
-        <div class="label"><strong>WebViewer2</strong><span>A tabbed browser built with Tauri.</span></div>
-        <span class="value">1.0.0</span>
+        <div class="label"><strong>WebViewer2</strong><span>A tabbed browser using Windows WebView2.</span></div>
+        <span id="webviewer2-version" class="value"></span>
       </div>
       <div class="card">
         <div class="label"><strong>WebView2 runtime</strong><span>The engine that renders pages and runs extensions.</span></div>
