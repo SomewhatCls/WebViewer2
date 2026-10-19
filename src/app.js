@@ -6,7 +6,7 @@ const CLOSE_SVG = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></sv
 const INTERNAL = new Set(["about:extensions", "about:settings", "about:new"]);
 
 // Mirrors the Rust `Settings`; replaced by the saved values at startup.
-let settings = { theme: "system", search: "duckduckgo", home: "https://duckduckgo.com", save_history: true };
+let settings = { theme: "system", search: "duckduckgo", home: "about:new", save_history: true };
 
 function applyTheme() {
   const t = settings.theme;
@@ -365,5 +365,8 @@ syncMax();
   applyTheme();
   // Mica is only available on Windows 11; without it the strip keeps a solid colour.
   try { if (await invoke("has_mica")) document.documentElement.classList.add("mica"); } catch {}
-  openTab();
+  let launch;
+  try { launch = await invoke("take_launch_url"); } catch {}
+  //protects from bad cli launch url, opens with home tab.
+  openTab(launch ?? undefined);
 })();

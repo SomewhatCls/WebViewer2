@@ -31,12 +31,58 @@ struct Mica(bool);
 /// Page webviews slide down by the same amount so the list is not covered by them.
 struct Suggest(std::sync::Mutex<f64>);
 
+//import necessary module for cli site launch command
+use std::path::Path;
+
+/// first launch cli command
+struct Launch(std::sync::Mutex<Option<String>>);
+
 #[derive(Clone, Serialize)]
 struct TabUpdate {
     id: String,
     url: Option<String>,
     title: Option<String>,
     loading: Option<bool>,
+}
+
+/// Finds the first usable argument (URL or file path) and returns it as a URL.
+fn url_from_args(args: &[String], cwd: Option<&Path>) -> Option<String> {
+    for a in args.iter().skip(1) {
+        let a = a.trim().trim_matches('"');
+        if a.is_empty() || a.starts_with('-') {
+            continue;
+        }
+        if let Ok(u) = Url::parse(a) {
+            if matches!(u.scheme(), "http" | "https" | "file" | "chrome-extension") {
+                return Some(u.to_string());
+            }
+        }
+        // Not a URL: treat it as a file path ("C:\x\a.html" parses as scheme "c", so it lands here).
+        let mut p = PathBuf::from(a);
+        if p.is_relative() {
+            if let Some(c) = cwd {
+                p = c.join(p);
+            }
+        }
+        if let Ok(full) = p.canonicalize() {
+            let s = full.to_string_lossy();
+            let clean = PathBuf::from(s.strip_prefix(r"\\?\").unwrap_or(&s));
+            if let Ok(u) = Url::from_file_path(&clean) {
+                return Some(u.to_string());
+            }
+        }
+    }
+    None
+}
+
+#[tauri::command]
+fn take_launch_url(app: AppHandle) -> Option<String> {
+    app.state::<Launch>().0.lock().unwrap().take()
+}
+
+#[tauri::command]
+fn take_launch_url(app: AppHandle) -> Option<String> {
+    app.state::<Launch>().0.lock().unwrap().take()
 }
 
 fn label(id: &str) -> String {
@@ -60,7 +106,7 @@ fn normalize(input: &str, data: &data::Data) -> String {
     let s = input.trim();
     if let Ok(u) = Url::parse(s) {
         // chrome-extension:// lets extension pages (e.g. their settings) open in a tab.
-        if matches!(u.scheme(), "http" | "https" | "chrome-extension") {
+        if matches!(u.scheme(), "http" | "https" | "chrome-extension" | "file") {
             return s.to_string();
         }
     }
@@ -390,6 +436,17 @@ fn restart_app(app: AppHandle) {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+            // captures second single instance cli launches in this process
+            if let Some(url) = url_from_args(&args, Some(Path::new(&cwd))) {
+                let _ = app.emit("open-tab", url);
+            }
+            if let Some(w) = app.get_window("main") {
+                let _ = w.unminimize();
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
             new_tab,
@@ -430,6 +487,8 @@ fn main() {
             let loaded = ext.as_deref().map(store::prepare).unwrap_or_default();
             let data = data::Data::load(base);
             let theme = data.settings().theme;
+            let launch = url_from_args(&std::env::args().collect::<Vec<_>>(), None);
+            app.manage(Launch(std::sync::Mutex::new(launch)));
             app.manage(Ext(ext.clone()));
             app.manage(Loaded(std::sync::Mutex::new(loaded)));
             app.manage(Suggest(std::sync::Mutex::new(0.0)));
