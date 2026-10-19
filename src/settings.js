@@ -249,6 +249,7 @@ async function loadExts() {
 
 $("#store").onclick = () => invoke("open_page", { url: "https://chromewebstore.google.com/" });
 $("#manage").onclick = () => invoke("open_page", { url: "about:extensions" });
+$("#show-licenses").onclick = () => invoke("open_page", { url: "about:licenses" });
 
 // ---------- Events + startup ----------
 

@@ -3,7 +3,7 @@ const { listen } = window.__TAURI__.event;
 
 const $ = (s) => document.querySelector(s);
 const CLOSE_SVG = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>';
-const INTERNAL = new Set(["about:extensions", "about:settings", "about:new"]);
+const INTERNAL = new Set(["about:extensions", "about:settings", "about:new", "about:licenses"]);
 
 // Mirrors the Rust `Settings`; replaced by the saved values at startup.
 let settings = { theme: "system", search: "duckduckgo", home: "about:new", save_history: true, save_session: false };
@@ -19,7 +19,7 @@ const storeId = (url) =>
   /^https:\/\/chromewebstore\.google\.com\/detail\/[^/]+\/([a-p]{32})/.exec(url ?? "")?.[1] ?? null;
 // Our own pages are served from tauri.localhost; show a friendly address.
 const shown = (url) => {
-  const m = /^https?:\/\/tauri\.localhost\/(extensions|settings|new)\.html/.exec(url ?? "");
+  const m = /^https?:\/\/tauri\.localhost\/(extensions|settings|new|licenses)\.html/.exec(url ?? "");
   return m ? `about:${m[1]}` : url ?? "";
 };
 
