@@ -80,11 +80,6 @@ fn take_launch_url(app: AppHandle) -> Option<String> {
     app.state::<Launch>().0.lock().unwrap().take()
 }
 
-#[tauri::command]
-fn take_launch_url(app: AppHandle) -> Option<String> {
-    app.state::<Launch>().0.lock().unwrap().take()
-}
-
 fn label(id: &str) -> String {
     format!("tab-{id}")
 }
@@ -453,6 +448,7 @@ fn main() {
             activate_tab,
             close_tab,
             exit_app,
+            take_launch_url,
             navigate,
             nav,
             install_extension,
