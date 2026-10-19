@@ -91,6 +91,7 @@ function syncControls() {
   set($("#theme"), settings.theme);
   $("#savehist").setAttribute("aria-checked", String(settings.save_history));
   $("#savesession").setAttribute("aria-checked", String(settings.save_session));
+  $("#showrec").setAttribute("aria-checked", String(settings.show_suggestions));
 }
 
 async function save(patch) {
@@ -114,8 +115,9 @@ $("#theme").onchange = (e) => save({ theme: e.target.value });
 $("#home").onchange = (e) => save({ home: e.target.value });
 $("#home").onkeydown = (e) => { if (e.key === "Enter") e.target.blur(); };
 $("#savehist").onclick = () => save({ save_history: !settings.save_history });
-
 $("#savesession").onclick = () => save({save_session: !settings.save_session});
+$("#showrec").onclick = () => save({show_suggestions: !settings.show_suggestions});
+
 // ---------- Navigation ----------
 
 function show(name) {

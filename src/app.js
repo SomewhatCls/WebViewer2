@@ -6,7 +6,7 @@ const CLOSE_SVG = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></sv
 const INTERNAL = new Set(["about:extensions", "about:settings", "about:new", "about:licenses"]);
 
 // Mirrors the Rust `Settings`; replaced by the saved values at startup.
-let settings = { theme: "system", search: "duckduckgo", home: "about:new", save_history: true, save_session: false };
+let settings = { theme: "system", search: "duckduckgo", home: "about:new", save_history: true, show_suggestions: true, save_session: false };
 
 function applyTheme() {
   const t = settings.theme;
@@ -309,7 +309,10 @@ function pick(r) {
   addr.blur();
 }
 
+//updates the suggested address bar inputs based on input and search history (if enabled)
 async function updateSuggest() {
+  if (!settings.show_suggestions)
+    return;
   const q = addr.value.trim();
   const seq = ++suggestSeq;
   if (!q || INTERNAL.has(q)) return closeSuggest();
@@ -324,6 +327,7 @@ async function updateSuggest() {
   invoke("set_suggest_height", { height: rows.length * ROW_H + PAD });
 }
 
+//address bar
 const addr = $("#addr");
 addr.onfocus = () => addr.select();
 addr.oninput = () => { clearTimeout(suggestTimer); suggestTimer = setTimeout(updateSuggest, 60); };
@@ -367,6 +371,7 @@ $("#strip").addEventListener("mousedown", (e) => {
   if (e.button !== 0 || e.target.closest(".tab, button")) return;
   invoke(e.detail === 2 ? "win_toggle_maximize" : "win_drag");
 });
+//window controls
 $("#win-min").onclick = () => invoke("win_minimize");
 $("#win-max").onclick = () => invoke("win_toggle_maximize");
 $("#win-close").onclick = () => invoke("win_close");
