@@ -28,6 +28,8 @@ let active = null;
 let seq = 0;
 const closingTabs = new Set();
 let shuttingDown = false;
+let restoring = true; // no saving while the old session is being reopened
+let lastSaved = "";
 
 
 async function openTab(url = settings.home) {
@@ -118,6 +120,8 @@ async function closeTab(id) {
     shuttingDown = true;
 
     try {
+      //save session before closing app
+      await invoke("save_tabs", { tabs: [], active: 0 });
       await invoke("exit_app");
     } catch (e) {
       shuttingDown = false;
@@ -165,6 +169,22 @@ function render() {
   $("#progress").classList.toggle("on", !!t?.loading);
   if (document.activeElement !== $("#addr")) $("#addr").value = shown(t?.url);
   $("#add").hidden = !storeId(t?.url);
+  $("#add").hidden = !storeId(t?.url);
+  saveSession();
+}
+
+//saves current tabs and window to json
+function saveSession() {
+  if (restoring || shuttingDown) return;
+  const list = [...tabs]
+    .map(([id, t]) => ({ id, url: shown(t.url) }))
+    .filter((e) => e.url && !e.url.startsWith("chrome-search://"));
+  const urls = list.map((e) => e.url);
+  const idx = Math.max(0, list.findIndex((e) => e.id === active));
+  const key = JSON.stringify([urls, idx]);
+  if (key === lastSaved) return; // titles/loading state change often, the list rarely
+  lastSaved = key;
+  invoke("save_tabs", { tabs: urls, active: idx }).catch(() => {});
 }
 
 // Adds a finished page load to the history (the backend ignores internal pages and dedupes).
