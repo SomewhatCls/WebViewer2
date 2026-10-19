@@ -12,7 +12,7 @@ use tauri::Url;
 const MAX_HISTORY: usize = 5000;
 /// Re-visits of the same URL within this window update the last entry instead of adding one.
 const DEDUPE_MS: u64 = 60_000;
-const DEFAULT_HOME: &str = "https://duckduckgo.com";
+const DEFAULT_HOME: &str = "about:new";
 
 /// A user-defined search engine. `url` contains `%s` where the search terms go.
 #[derive(Clone, Serialize, Deserialize)]

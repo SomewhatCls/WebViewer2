@@ -19,7 +19,7 @@ const storeId = (url) =>
   /^https:\/\/chromewebstore\.google\.com\/detail\/[^/]+\/([a-p]{32})/.exec(url ?? "")?.[1] ?? null;
 // Our own pages are served from tauri.localhost; show a friendly address.
 const shown = (url) => {
-  const m = /^https?:\/\/tauri\.localhost\/(extensions|settings)\.html/.exec(url ?? "");
+  const m = /^https?:\/\/tauri\.localhost\/(extensions|settings|new)\.html/.exec(url ?? "");
   return m ? `about:${m[1]}` : url ?? "";
 };
 
