@@ -381,7 +381,7 @@ window.addEventListener("resize", syncMax); // the UI webview resizes with the w
 syncMax();
 
 (async () => {
-  try { settings = await invoke("get_settings"); } catch {}
+  try { settings = {...settings, ...(await invoke("get_settings"))}; } catch {}
   applyTheme();
   try { if (await invoke("has_mica")) document.documentElement.classList.add("mica"); } catch {}
 

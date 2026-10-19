@@ -31,6 +31,7 @@ pub struct Settings {
     pub search: String,
     pub home: String,
     pub save_history: bool,
+    pub save_session: bool,
     pub custom_engines: Vec<Engine>,
 }
 
@@ -41,6 +42,7 @@ impl Default for Settings {
             search: "duckduckgo".into(),
             home: DEFAULT_HOME.into(),
             save_history: true,
+            save_session: false,
             custom_engines: vec![],
         }
     }
