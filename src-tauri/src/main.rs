@@ -7,11 +7,11 @@ mod data;
 mod live;
 mod store;
 
-use serde::Serialize;
-use std::path::PathBuf;
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use tauri::{
-    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Position, Size, Theme, Url,
-    WebviewUrl, Window, WindowEvent,
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, PhysicalSize,
+    Position, Size, Theme, Url, WebviewUrl, Window, WindowEvent,
     webview::{NewWindowResponse, PageLoadEvent, WebviewBuilder},
     window::{Effect, EffectsBuilder, WindowBuilder},
 };
@@ -31,11 +31,28 @@ struct Mica(bool);
 /// Page webviews slide down by the same amount so the list is not covered by them.
 struct Suggest(std::sync::Mutex<f64>);
 
-//import necessary module for cli site launch command
-use std::path::Path;
-
-/// first launch cli command
+/// URL passed on the command line at first launch; the UI takes it once at startup.
 struct Launch(std::sync::Mutex<Option<String>>);
+
+// --- Session (open tabs + window bounds) ----------------------------------------
+
+#[derive(Clone, Serialize, Deserialize, Default)]
+struct WinState {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    maximized: bool,
+}
+
+#[derive(Clone, Serialize, Deserialize, Default)]
+struct Session {
+    window: Option<WinState>,
+    tabs: Vec<String>,
+    active: usize,
+}
+
+struct SessionState(std::sync::Mutex<Session>);
 
 #[derive(Clone, Serialize)]
 struct TabUpdate {
@@ -45,7 +62,45 @@ struct TabUpdate {
     loading: Option<bool>,
 }
 
+fn label(id: &str) -> String {
+    format!("tab-{id}")
+}
+
+/// Every webview shares one WebView2 environment, so options must match.
+fn configure(
+    b: WebviewBuilder<tauri::Wry>,
+    ext: Option<&PathBuf>,
+) -> WebviewBuilder<tauri::Wry> {
+    let b = b.browser_extensions_enabled(true);
+
+    match ext {
+        Some(path) => b.extensions_path(path),
+        None => b,
+    }
+}
+
+fn normalize(input: &str, data: &data::Data) -> String {
+    let s = input.trim();
+    if let Ok(u) = Url::parse(s) {
+        // chrome-extension:// lets extension pages (e.g. their settings) open in a tab.
+        // file:// lets local HTML files (e.g. opened from WebStorm) open in a tab.
+        if matches!(u.scheme(), "http" | "https" | "file" | "chrome-extension") {
+            return s.to_string();
+        }
+    }
+    if !s.contains(char::is_whitespace) {
+        if s.starts_with("localhost") {
+            return format!("http://{s}");
+        }
+        if s.contains('.') {
+            return format!("https://{s}");
+        }
+    }
+    data.search_url(s)
+}
+
 /// Finds the first usable argument (URL or file path) and returns it as a URL.
+/// args[0] is the executable itself and is skipped.
 fn url_from_args(args: &[String], cwd: Option<&Path>) -> Option<String> {
     for a in args.iter().skip(1) {
         let a = a.trim().trim_matches('"');
@@ -73,47 +128,6 @@ fn url_from_args(args: &[String], cwd: Option<&Path>) -> Option<String> {
         }
     }
     None
-}
-
-#[tauri::command]
-fn take_launch_url(app: AppHandle) -> Option<String> {
-    app.state::<Launch>().0.lock().unwrap().take()
-}
-
-fn label(id: &str) -> String {
-    format!("tab-{id}")
-}
-
-/// Every webview shares one WebView2 environment, so options must match.
-fn configure(
-    b: WebviewBuilder<tauri::Wry>,
-    ext: Option<&PathBuf>,
-) -> WebviewBuilder<tauri::Wry> {
-    let b = b.browser_extensions_enabled(true);
-
-    match ext {
-        Some(path) => b.extensions_path(path),
-        None => b,
-    }
-}
-
-fn normalize(input: &str, data: &data::Data) -> String {
-    let s = input.trim();
-    if let Ok(u) = Url::parse(s) {
-        // chrome-extension:// lets extension pages (e.g. their settings) open in a tab.
-        if matches!(u.scheme(), "http" | "https" | "chrome-extension" | "file") {
-            return s.to_string();
-        }
-    }
-    if !s.contains(char::is_whitespace) {
-        if s.starts_with("localhost") {
-            return format!("http://{s}");
-        }
-        if s.contains('.') {
-            return format!("https://{s}");
-        }
-    }
-    data.search_url(s)
 }
 
 fn apply_theme(window: &Window, theme: &str) {
@@ -165,6 +179,107 @@ fn show_only(app: &AppHandle, id: &str) {
 
 fn emit_tab(app: &AppHandle, update: TabUpdate) {
     let _ = app.emit("tab-updated", update);
+}
+
+// --- Session helpers --------------------------------------------------------------
+
+fn session_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path().app_data_dir().ok().map(|d| d.join("session.json"))
+}
+
+fn read_session(app: &AppHandle) -> Session {
+    session_path(app)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// Writes the in-memory session to disk (tmp file + rename, so a crash cannot leave half a file).
+fn persist(app: &AppHandle) {
+    let s = app.state::<SessionState>().0.lock().unwrap().clone();
+    let Some(path) = session_path(app) else { return };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(json) = serde_json::to_string_pretty(&s) {
+        let tmp = path.with_extension("json.tmp");
+        if std::fs::write(&tmp, json).is_ok() {
+            let _ = std::fs::rename(&tmp, &path);
+        }
+    }
+}
+
+/// Remembers the window bounds in memory (the disk write happens on exit).
+fn track_window(window: &Window) {
+    // A minimized window reports bogus coordinates.
+    if window.is_minimized().unwrap_or(false) {
+        return;
+    }
+    let (Ok(pos), Ok(size)) = (window.outer_position(), window.inner_size()) else {
+        return;
+    };
+    let maximized = window.is_maximized().unwrap_or(false);
+    let st = window.app_handle().state::<SessionState>();
+    let mut s = st.0.lock().unwrap();
+    let ws = s.window.get_or_insert_with(Default::default);
+    ws.maximized = maximized;
+    // While maximized, keep the last normal bounds so "restore" goes back to them.
+    if !maximized {
+        ws.x = pos.x;
+        ws.y = pos.y;
+        ws.width = size.width;
+        ws.height = size.height;
+    }
+}
+
+/// True if the window's top edge is still reachable on one of the connected monitors.
+fn on_screen(window: &Window, ws: &WinState) -> bool {
+    window
+        .available_monitors()
+        .map(|ms| {
+            ms.iter().any(|m| {
+                let (p, s) = (m.position(), m.size());
+                let cx = ws.x + (ws.width as i32) / 2;
+                cx >= p.x
+                    && cx < p.x + s.width as i32
+                    && ws.y >= p.y
+                    && ws.y < p.y + s.height as i32 - 50
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn restore_window(window: &Window, ws: &WinState) {
+    if ws.width > 0 && ws.height > 0 {
+        let _ = window.set_size(PhysicalSize::new(ws.width, ws.height));
+        if on_screen(window, ws) {
+            let _ = window.set_position(PhysicalPosition::new(ws.x, ws.y));
+        }
+    }
+    if ws.maximized {
+        let _ = window.maximize();
+    }
+}
+
+#[tauri::command]
+fn load_session(app: AppHandle) -> Session {
+    app.state::<SessionState>().0.lock().unwrap().clone()
+}
+
+#[tauri::command]
+fn save_tabs(app: AppHandle, tabs: Vec<String>, active: usize) {
+    {
+        let st = app.state::<SessionState>();
+        let mut s = st.0.lock().unwrap();
+        s.tabs = tabs;
+        s.active = active;
+    }
+    persist(&app);
+}
+
+#[tauri::command]
+fn take_launch_url(app: AppHandle) -> Option<String> {
+    app.state::<Launch>().0.lock().unwrap().take()
 }
 
 // Commands are async: creating webviews from sync commands deadlocks on Windows.
@@ -269,6 +384,7 @@ fn close_tab(app: AppHandle, id: String) -> Result<(), String> {
 
 #[tauri::command]
 fn exit_app(app: tauri::AppHandle) {
+    persist(&app);
     app.exit(0);
 }
 
@@ -426,13 +542,15 @@ async fn open_extension_options(app: AppHandle, id: String) -> Result<(), String
 
 #[tauri::command]
 fn restart_app(app: AppHandle) {
+    persist(&app);
     app.restart();
 }
 
 fn main() {
     tauri::Builder::default()
+        // Must be the first plugin. A second launch (e.g. from WebStorm) ends up here
+        // instead of starting a new process.
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
-            // captures second single instance cli launches in this process
             if let Some(url) = url_from_args(&args, Some(Path::new(&cwd))) {
                 let _ = app.emit("open-tab", url);
             }
@@ -448,7 +566,6 @@ fn main() {
             activate_tab,
             close_tab,
             exit_app,
-            take_launch_url,
             navigate,
             nav,
             install_extension,
@@ -466,6 +583,9 @@ fn main() {
             history_remove,
             history_clear,
             set_suggest_height,
+            take_launch_url,
+            load_session,
+            save_tabs,
             has_mica,
             win_minimize,
             win_toggle_maximize,
@@ -483,17 +603,26 @@ fn main() {
             let loaded = ext.as_deref().map(store::prepare).unwrap_or_default();
             let data = data::Data::load(base);
             let theme = data.settings().theme;
-            let launch = url_from_args(&std::env::args().collect::<Vec<_>>(), None);
-            app.manage(Launch(std::sync::Mutex::new(launch)));
             app.manage(Ext(ext.clone()));
             app.manage(Loaded(std::sync::Mutex::new(loaded)));
             app.manage(Suggest(std::sync::Mutex::new(0.0)));
             app.manage(data);
 
+            // URL / file path given on the command line (e.g. by WebStorm's "open in browser").
+            let launch = url_from_args(&std::env::args().collect::<Vec<_>>(), None);
+            app.manage(Launch(std::sync::Mutex::new(launch)));
+
+            // Last session: open tabs and window bounds.
+            let session = read_session(app.handle());
+            let restore = session.window.clone();
+            app.manage(SessionState(std::sync::Mutex::new(session)));
+
             let window = WindowBuilder::new(app, "main")
                 .title("WebViewer2")
                 .inner_size(1200.0, 800.0)
                 .min_inner_size(640.0, 400.0)
+                // Hidden until position/size are restored, so it doesn't flash at the default spot.
+                .visible(false)
                 // Custom frame: the tab strip is the title bar. With shadow(true), Windows keeps
                 // native resize handles outside the client area and rounds corners on Windows 11.
                 .decorations(false)
@@ -509,6 +638,11 @@ fn main() {
             app.manage(Mica(mica));
             apply_theme(&window, &theme);
 
+            // Restore before reading the size below, so the UI webview gets the right width.
+            if let Some(ws) = &restore {
+                restore_window(&window, ws);
+            }
+
             let size = window
                 .inner_size()?
                 .to_logical::<f64>(window.scale_factor()?);
@@ -522,11 +656,17 @@ fn main() {
                 LogicalSize::new(size.width, CHROME_H),
             )?;
 
+            window.show()?;
+
             let w = window.clone();
-            window.on_window_event(move |e| {
-                if let WindowEvent::Resized(_) = e {
+            window.on_window_event(move |e| match e {
+                WindowEvent::Resized(_) => {
                     layout(&w);
+                    track_window(&w);
                 }
+                WindowEvent::Moved(_) => track_window(&w),
+                WindowEvent::CloseRequested { .. } => persist(w.app_handle()),
+                _ => {}
             });
             Ok(())
         })

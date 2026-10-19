@@ -363,10 +363,21 @@ syncMax();
 (async () => {
   try { settings = await invoke("get_settings"); } catch {}
   applyTheme();
-  // Mica is only available on Windows 11; without it the strip keeps a solid colour.
   try { if (await invoke("has_mica")) document.documentElement.classList.add("mica"); } catch {}
-  let launch;
+
+  let launch, session;
   try { launch = await invoke("take_launch_url"); } catch {}
-  //protects from bad cli launch url, opens with home tab.
-  openTab(launch ?? undefined);
+  try { session = await invoke("load_session"); } catch {}
+
+  // Reopen the previous tabs one after another (parallel webview creation is riskier).
+  for (const u of session?.tabs ?? []) await openTab(u);
+  const ids = [...tabs.keys()];
+  if (ids.length) activate(ids[Math.min(session?.active ?? 0, ids.length - 1)]);
+
+   //protects from bad cli launch url, opens with home tab.
+  if (launch) await openTab(launch ?? undefined);
+  else if (!ids.length) await openTab(); // nothing to restore: home page
+
+  restoring = false;
+  saveSession();
 })();
