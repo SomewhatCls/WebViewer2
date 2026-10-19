@@ -97,6 +97,16 @@ async function save(patch) {
   settings = { ...settings, ...patch };
   syncControls();
   try { await invoke("set_settings", { settings }); } catch (e) { console.error(e); }
+
+  
+//deleting the session the moment of deactivation to avoid unnecessary data storeage
+  if (!settings.save_session){
+      try {
+        await invoke("delete_session");
+      } catch (err) {
+        console.error("Failed to delete session file:", err);
+      }
+    }
 }
 
 $("#search").onchange = (e) => save({ search: e.target.value });
@@ -104,8 +114,8 @@ $("#theme").onchange = (e) => save({ theme: e.target.value });
 $("#home").onchange = (e) => save({ home: e.target.value });
 $("#home").onkeydown = (e) => { if (e.key === "Enter") e.target.blur(); };
 $("#savehist").onclick = () => save({ save_history: !settings.save_history });
-$("#savesession").onclick = () => save({ save_session: !settings.save_session });
 
+$("#savesession").onclick = () => save({save_session: !settings.save_session});
 // ---------- Navigation ----------
 
 function show(name) {

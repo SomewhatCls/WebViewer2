@@ -10,7 +10,7 @@ mod store;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tauri::{
-    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, PhysicalSize,
+    State, AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, PhysicalSize,
     Position, Size, Theme, Url, WebviewUrl, Window, WindowEvent,
     webview::{NewWindowResponse, PageLoadEvent, WebviewBuilder},
     window::{Effect, EffectsBuilder, WindowBuilder},
@@ -265,6 +265,28 @@ fn restore_window(window: &Window, ws: &WinState) {
 fn load_session(app: AppHandle) -> Session {
     app.state::<SessionState>().0.lock().unwrap().clone()
 }
+
+#[tauri::command]
+fn delete_session(app: AppHandle, state: State<'_, SessionState>) -> Result<(), String> {
+    //Lock and completely reset the in-memory runtime session state
+    {
+        let mut session_lock = state.0.lock().map_err(|e| e.to_string())?;
+        *session_lock = Session::default(); 
+    }
+
+    //Overwrite the physical session.json file with the empty baseline data
+    persist(&app);
+
+    //Optional hard-deletion: Clean up the session file completely from the disk
+    if let Some(path) = session_path(&app) {
+        if path.exists() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    Ok(())
+}
+
 
 #[tauri::command]
 fn save_tabs(app: AppHandle, tabs: Vec<String>, active: usize) {
@@ -585,6 +607,7 @@ fn main() {
             set_suggest_height,
             take_launch_url,
             load_session,
+            delete_session,
             save_tabs,
             has_mica,
             win_minimize,
