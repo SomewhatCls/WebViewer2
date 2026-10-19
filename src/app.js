@@ -26,20 +26,42 @@ const shown = (url) => {
 const tabs = new Map(); // id -> { title, url, loading }
 let active = null;
 let seq = 0;
+const closingTabs = new Set();
+let shuttingDown = false;
+
 
 async function openTab(url = settings.home) {
+  if (shuttingDown) return;
+
   const id = "t" + ++seq;
+  const isExtensionPage = /^chrome-extension:\/\//i.test(url);
+
   tabs.set(id, { title: "New tab", url, loading: true });
   active = id;
   render();
+
   try {
-    await invoke("new_tab", { id, url });
+    // Let the native webview initialize and load its extensions first.
+    await invoke("new_tab", {
+      id,
+      url: isExtensionPage ? "about:blank" : url,
+    });
+
+    // Navigate to the extension page after creation is complete.
+    if (isExtensionPage) {
+      await invoke("navigate", { id, input: url });
+    }
   } catch (e) {
-    tabs.get(id).title = "Failed to open";
-    tabs.get(id).loading = false;
-    render();
+    const tab = tabs.get(id);
+    if (tab) {
+      tab.title = "Failed to open";
+      tab.loading = false;
+      render();
+    }
+    console.error("Failed to open tab:", e);
   }
 }
+
 
 // Internal pages (settings, extensions) reuse an already-open tab.
 function openInternal(url) {
@@ -53,16 +75,66 @@ function activate(id) {
   invoke("activate_tab", { id });
 }
 
-function closeTab(id) {
+async function closeTab(id) {
+  if (shuttingDown || closingTabs.has(id) || !tabs.has(id)) {
+    return;
+  }
+
+  closingTabs.add(id);
+
+  // Finish destroying the native webview before changing lifecycle state.
+  try {
+    await invoke("close_tab", { id });
+  } catch (e) {
+    console.error("close_tab failed:", e);
+    closingTabs.delete(id);
+    return;
+  }
+
+  closingTabs.delete(id);
+
+  // Re-read the current tabs after the async operation.
   const ids = [...tabs.keys()];
   const idx = ids.indexOf(id);
+
+  // Another operation may already have removed this tab.
+  if (idx === -1) return;
+
+  const wasActive = active === id;
+
   tabs.delete(id);
-  invoke("close_tab", { id });
-  if (active === id) {
-    const next = [...tabs.keys()][Math.min(idx, tabs.size - 1)];
-    next ? activate(next) : openTab();
+
+  const remaining = [...tabs.keys()];
+
+  if (wasActive) {
+    active =
+      remaining[Math.min(idx, remaining.length - 1)] ?? null;
   }
+
   render();
+
+  // There is nothing left to display: shut down the application.
+  if (tabs.size === 0) {
+    shuttingDown = true;
+
+    try {
+      await invoke("exit_app");
+    } catch (e) {
+      shuttingDown = false;
+      console.error("exit_app failed:", e);
+    }
+
+    return;
+  }
+
+  // Activate the replacement only after the previous tab has closed.
+  if (wasActive && active) {
+    try {
+      await invoke("activate_tab", { id: active });
+    } catch (e) {
+      console.error("activate_tab failed:", e);
+    }
+  }
 }
 
 function render() {

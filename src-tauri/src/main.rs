@@ -10,10 +10,10 @@ mod store;
 use serde::Serialize;
 use std::path::PathBuf;
 use tauri::{
-    webview::{NewWindowResponse, PageLoadEvent, WebviewBuilder},
-    window::{Effect, EffectsBuilder, WindowBuilder},
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Position, Size, Theme, Url,
     WebviewUrl, Window, WindowEvent,
+    webview::{NewWindowResponse, PageLoadEvent, WebviewBuilder},
+    window::{Effect, EffectsBuilder, WindowBuilder},
 };
 
 /// Height (logical px) of the UI webview: 40 tab strip + 44 toolbar.
@@ -44,10 +44,14 @@ fn label(id: &str) -> String {
 }
 
 /// Every webview shares one WebView2 environment, so options must match.
-fn configure(b: WebviewBuilder<tauri::Wry>, ext: &Option<PathBuf>) -> WebviewBuilder<tauri::Wry> {
+fn configure(
+    b: WebviewBuilder<tauri::Wry>,
+    ext: Option<&PathBuf>,
+) -> WebviewBuilder<tauri::Wry> {
     let b = b.browser_extensions_enabled(true);
+
     match ext {
-        Some(p) => b.extensions_path(p),
+        Some(path) => b.extensions_path(path),
         None => b,
     }
 }
@@ -89,10 +93,16 @@ fn layout(window: &Window) {
     let extra = *window.app_handle().state::<Suggest>().0.lock().unwrap();
     for (name, wv) in window.app_handle().webviews() {
         if name == "ui" {
-            let _ = wv.set_size(Size::Logical(LogicalSize::new(size.width, CHROME_H + extra)));
+            let _ = wv.set_size(Size::Logical(LogicalSize::new(
+                size.width,
+                CHROME_H + extra,
+            )));
         } else if name.starts_with("tab-") {
             // Only moved, not resized: the page keeps its layout while the suggestion list is open.
-            let _ = wv.set_position(Position::Logical(LogicalPosition::new(0.0, CHROME_H + extra)));
+            let _ = wv.set_position(Position::Logical(LogicalPosition::new(
+                0.0,
+                CHROME_H + extra,
+            )));
             let _ = wv.set_size(Size::Logical(LogicalSize::new(size.width, content_h)));
         }
     }
@@ -121,16 +131,22 @@ fn emit_tab(app: &AppHandle, update: TabUpdate) {
 async fn new_tab(app: AppHandle, id: String, url: String) -> Result<(), String> {
     let window = app.get_window("main").ok_or("main window missing")?;
     let scale = window.scale_factor().map_err(|e| e.to_string())?;
-    let size = window.inner_size().map_err(|e| e.to_string())?.to_logical::<f64>(scale);
+    let size = window
+        .inner_size()
+        .map_err(|e| e.to_string())?
+        .to_logical::<f64>(scale);
     let target = match url.as_str() {
         "about:extensions" => WebviewUrl::App("extensions.html".into()),
         "about:settings" => WebviewUrl::App("settings.html".into()),
         _ => {
             let data = app.state::<data::Data>();
-            WebviewUrl::External(normalize(&url, &data).parse::<Url>().map_err(|e| e.to_string())?)
+            WebviewUrl::External(
+                normalize(&url, &data)
+                    .parse::<Url>()
+                    .map_err(|e| e.to_string())?,
+            )
         }
     };
-    let ext = app.state::<Ext>().0.clone();
 
     let (a1, i1) = (app.clone(), id.clone());
     let (a2, i2) = (app.clone(), id.clone());
@@ -144,19 +160,38 @@ async fn new_tab(app: AppHandle, id: String, url: String) -> Result<(), String> 
             if u.scheme() == "chrome-search" {
                 return false;
             }
-            emit_tab(&a1, TabUpdate { id: i1.clone(), url: Some(u.to_string()), title: None, loading: None });
+            emit_tab(
+                &a1,
+                TabUpdate {
+                    id: i1.clone(),
+                    url: Some(u.to_string()),
+                    title: None,
+                    loading: None,
+                },
+            );
             true
         })
         .on_page_load(move |_, p| {
-            emit_tab(&a2, TabUpdate {
-                id: i2.clone(),
-                url: Some(p.url().to_string()),
-                title: None,
-                loading: Some(matches!(p.event(), PageLoadEvent::Started)),
-            });
+            emit_tab(
+                &a2,
+                TabUpdate {
+                    id: i2.clone(),
+                    url: Some(p.url().to_string()),
+                    title: None,
+                    loading: Some(matches!(p.event(), PageLoadEvent::Started)),
+                },
+            );
         })
         .on_document_title_changed(move |_, title| {
-            emit_tab(&a3, TabUpdate { id: i3.clone(), url: None, title: Some(title), loading: None });
+            emit_tab(
+                &a3,
+                TabUpdate {
+                    id: i3.clone(),
+                    url: None,
+                    title: Some(title),
+                    loading: None,
+                },
+            );
         })
         // target=_blank and window.open become new tabs.
         .on_new_window(move |u, _| {
@@ -166,7 +201,7 @@ async fn new_tab(app: AppHandle, id: String, url: String) -> Result<(), String> 
 
     window
         .add_child(
-            configure(builder, &ext),
+            configure(builder, None),
             LogicalPosition::new(0.0, CHROME_H),
             LogicalSize::new(size.width, (size.height - CHROME_H).max(0.0)),
         )
@@ -181,10 +216,18 @@ async fn activate_tab(app: AppHandle, id: String) {
 }
 
 #[tauri::command]
-async fn close_tab(app: AppHandle, id: String) {
+fn close_tab(app: AppHandle, id: String) -> Result<(), String> {
     if let Some(wv) = app.get_webview(&label(&id)) {
-        let _ = wv.close();
+        wv.close()
+            .map_err(|e| format!("Failed to close tab {id}: {e}"))?;
     }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn exit_app(app: tauri::AppHandle) {
+    app.exit(0);
 }
 
 #[tauri::command]
@@ -192,7 +235,9 @@ async fn navigate(app: AppHandle, id: String, input: String) -> Result<(), Strin
     let wv = app.get_webview(&label(&id)).ok_or("no such tab")?;
     let url = {
         let data = app.state::<data::Data>();
-        normalize(&input, &data).parse::<Url>().map_err(|e| e.to_string())?
+        normalize(&input, &data)
+            .parse::<Url>()
+            .map_err(|e| e.to_string())?
     };
     wv.navigate(url).map_err(|e| e.to_string())
 }
@@ -256,7 +301,8 @@ async fn set_settings(app: AppHandle, settings: data::Settings) -> Result<(), St
     if let Some(w) = app.get_window("main") {
         apply_theme(&w, &saved.theme);
     }
-    app.emit("settings-changed", saved).map_err(|e| e.to_string())
+    app.emit("settings-changed", saved)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -343,13 +389,35 @@ fn restart_app(app: AppHandle) {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
-            new_tab, activate_tab, close_tab, navigate, nav,
-            install_extension, list_extensions, remove_extension, open_extension_options, restart_app,
-            get_settings, set_settings, about_webview, open_page,
-            history_add, history_list, history_suggest, history_remove, history_clear, set_suggest_height,
+            new_tab,
+            activate_tab,
+            close_tab,
+            exit_app,
+            navigate,
+            nav,
+            install_extension,
+            list_extensions,
+            remove_extension,
+            open_extension_options,
+            restart_app,
+            get_settings,
+            set_settings,
+            about_webview,
+            open_page,
+            history_add,
+            history_list,
+            history_suggest,
+            history_remove,
+            history_clear,
+            set_suggest_height,
             has_mica,
-            win_minimize, win_toggle_maximize, win_is_maximized, win_drag, win_close
+            win_minimize,
+            win_toggle_maximize,
+            win_is_maximized,
+            win_drag,
+            win_close
         ])
         .setup(|app| {
             // Unpacked Chrome extensions go in <app data dir>/extensions.
@@ -385,11 +453,14 @@ fn main() {
             app.manage(Mica(mica));
             apply_theme(&window, &theme);
 
-            let size = window.inner_size()?.to_logical::<f64>(window.scale_factor()?);
+            let size = window
+                .inner_size()?
+                .to_logical::<f64>(window.scale_factor()?);
             window.add_child(
                 configure(
-                    WebviewBuilder::new("ui", WebviewUrl::App("index.html".into())).transparent(true),
-                    &ext,
+                    WebviewBuilder::new("ui", WebviewUrl::App("index.html".into()))
+                        .transparent(true),
+                    ext.as_ref(),
                 ),
                 LogicalPosition::new(0.0, 0.0),
                 LogicalSize::new(size.width, CHROME_H),

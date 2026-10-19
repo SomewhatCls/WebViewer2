@@ -2,7 +2,7 @@
 //! `<app data>/extensions/<id>/`, then load it into the running profile (see live.rs).
 //! wry also re-adds every sub-folder of that directory at each startup.
 
-use base64::{engine::general_purpose::STANDARD, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -13,7 +13,7 @@ use std::{
 };
 use tauri::{AppHandle, Manager};
 
-use crate::{live, Ext, Loaded};
+use crate::{Ext, Loaded, live};
 
 #[derive(Serialize)]
 pub struct ExtInfo {
@@ -37,14 +37,20 @@ fn parse_id(input: &str) -> Option<String> {
         return Some(s.into());
     }
     let u = tauri::Url::parse(s).ok()?;
-    if !matches!(u.host_str(), Some("chromewebstore.google.com" | "chrome.google.com")) {
+    if !matches!(
+        u.host_str(),
+        Some("chromewebstore.google.com" | "chrome.google.com")
+    ) {
         return None;
     }
     u.path_segments()?.find(|p| is_id(p)).map(String::from)
 }
 
 fn root(app: &AppHandle) -> Result<PathBuf, String> {
-    app.state::<Ext>().0.clone().ok_or_else(|| "Extensions folder unavailable".to_string())
+    app.state::<Ext>()
+        .0
+        .clone()
+        .ok_or_else(|| "Extensions folder unavailable".to_string())
 }
 
 fn read_json(path: &Path) -> Option<Value> {
@@ -78,11 +84,16 @@ async fn download(id: &str) -> Result<Vec<u8>, String> {
     let url = format!(
         "https://clients2.google.com/service/update2/crx?response=redirect&prodversion={ver}&acceptformat=crx2,crx3&x=id%3D{id}%26uc"
     );
-    let res = reqwest::get(&url).await.map_err(|e| format!("Download failed: {e}"))?;
+    let res = reqwest::get(&url)
+        .await
+        .map_err(|e| format!("Download failed: {e}"))?;
     if !res.status().is_success() {
         return Err(format!("The Web Store answered {}", res.status()));
     }
-    let bytes = res.bytes().await.map_err(|e| format!("Download failed: {e}"))?;
+    let bytes = res
+        .bytes()
+        .await
+        .map_err(|e| format!("Download failed: {e}"))?;
     if bytes.len() < 16 {
         return Err("The Web Store has no package for this ID. It may be delisted, unavailable in your region, or need a newer browser engine.".into());
     }
@@ -141,7 +152,11 @@ fn fields(b: &[u8]) -> Vec<(u64, &[u8])> {
 
 /// Chrome extension ID: first 16 bytes of SHA-256(public key), nibbles mapped to a-p.
 fn crx_id(key: &[u8]) -> String {
-    Sha256::digest(key)[..16].iter().flat_map(|b| [b >> 4, b & 15]).map(|n| (b'a' + n) as char).collect()
+    Sha256::digest(key)[..16]
+        .iter()
+        .flat_map(|b| [b >> 4, b & 15])
+        .map(|n| (b'a' + n) as char)
+        .collect()
 }
 
 /// Returns the ZIP payload and the DER public key whose hash equals the extension ID.
@@ -182,7 +197,9 @@ fn unpack(zip: &[u8], key: Option<Vec<u8>>, dir: &Path) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     let mf = dir.join("manifest.json");
     let mut json = read_json(&mf).ok_or("The extension has no readable manifest.json")?;
-    let obj = json.as_object_mut().ok_or("manifest.json is not an object")?;
+    let obj = json
+        .as_object_mut()
+        .ok_or("manifest.json is not an object")?;
     if !obj.contains_key("manifest_version") {
         return Err("manifest.json has no manifest_version".into());
     }
@@ -190,7 +207,11 @@ fn unpack(zip: &[u8], key: Option<Vec<u8>>, dir: &Path) -> Result<(), String> {
     if let Some(k) = key {
         obj.insert("key".into(), STANDARD.encode(k).into());
     }
-    fs::write(&mf, serde_json::to_vec_pretty(&json).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
+    fs::write(
+        &mf,
+        serde_json::to_vec_pretty(&json).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())
 }
 
 pub async fn install(app: &AppHandle, input: &str) -> Result<ExtInfo, String> {
@@ -223,7 +244,10 @@ fn info(app: &AppHandle, dir: &Path) -> Option<ExtInfo> {
     let m = read_json(&dir.join("manifest.json"))?;
     let mut name = m["name"].as_str().unwrap_or(&id).to_string();
     // Resolve "__MSG_key__" names from the default locale.
-    let msg_key = name.strip_prefix("__MSG_").and_then(|n| n.strip_suffix("__")).map(str::to_string);
+    let msg_key = name
+        .strip_prefix("__MSG_")
+        .and_then(|n| n.strip_suffix("__"))
+        .map(str::to_string);
     if let Some(k) = msg_key {
         let loc = m["default_locale"].as_str().unwrap_or("en");
         let msgs = read_json(&dir.join("_locales").join(loc).join("messages.json"));
@@ -252,7 +276,9 @@ fn info(app: &AppHandle, dir: &Path) -> Option<ExtInfo> {
 
 /// Relative path of the extension's settings page (MV3 `options_ui`, or MV2 `options_page`).
 fn options_page(m: &Value) -> Option<String> {
-    let p = m["options_ui"]["page"].as_str().or_else(|| m["options_page"].as_str())?;
+    let p = m["options_ui"]["page"]
+        .as_str()
+        .or_else(|| m["options_page"].as_str())?;
     let p = p.trim_start_matches('/');
     (!p.is_empty()).then(|| p.to_string())
 }
@@ -269,7 +295,9 @@ pub async fn options_url(app: &AppHandle, id: &str) -> Result<String, String> {
     let raw = m["name"].as_str().unwrap_or("").to_string();
     let resolved = info(app, &dir).map(|i| i.name).unwrap_or_default();
 
-    let loaded = live::list(app).await.map_err(|e| format!("Couldn’t read the loaded extensions: {e}"))?;
+    let loaded = live::list(app)
+        .await
+        .map_err(|e| format!("Couldn’t read the loaded extensions: {e}"))?;
     let real = loaded
         .iter()
         .find(|(lid, _)| lid == id)
@@ -286,7 +314,12 @@ pub fn list(app: &AppHandle) -> Vec<ExtInfo> {
         .flatten()
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.is_dir() && !p.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.')))
+        .filter(|p| {
+            p.is_dir()
+                && !p
+                    .file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with('.'))
+        })
         .filter_map(|p| info(app, &p))
         .collect();
     out.sort_by_key(|e| e.name.to_lowercase());
@@ -298,7 +331,9 @@ pub async fn remove(app: &AppHandle, id: &str) -> Result<(), String> {
         return Err("Invalid extension ID".into());
     }
     // WebView2 keeps added extensions in the profile, so unload it there first.
-    live::remove(app, id).await.map_err(|e| format!("Couldn’t unload the extension: {e}"))?;
+    live::remove(app, id)
+        .await
+        .map_err(|e| format!("Couldn’t unload the extension: {e}"))?;
     let dir = root(app)?.join(id);
     if fs::remove_dir_all(&dir).is_err() {
         // Files may still be locked; park the folder where startup cleanup deletes it.

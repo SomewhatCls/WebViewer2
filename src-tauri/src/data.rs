@@ -65,7 +65,9 @@ fn encode(s: &str) -> String {
     let mut out = String::new();
     for b in s.bytes() {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
             b' ' => out.push('+'),
             _ => out.push_str(&format!("%{b:02X}")),
         }
@@ -85,7 +87,10 @@ fn search_query(url: &str) -> Option<String> {
     if !known {
         return None;
     }
-    u.query_pairs().find(|(k, _)| k == "q").map(|(_, v)| v.into_owned()).filter(|v| !v.is_empty())
+    u.query_pairs()
+        .find(|(k, _)| k == "q")
+        .map(|(_, v)| v.into_owned())
+        .filter(|v| !v.is_empty())
 }
 
 /// One address-bar suggestion drawn from the history.
@@ -106,20 +111,29 @@ fn now() -> u64 {
 
 impl Data {
     pub fn load(dir: Option<PathBuf>) -> Self {
-        let read = |name: &str| dir.as_ref().and_then(|d| fs::read_to_string(d.join(name)).ok());
+        let read = |name: &str| {
+            dir.as_ref()
+                .and_then(|d| fs::read_to_string(d.join(name)).ok())
+        };
         let settings: Settings = read("settings.json")
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or_default();
         let history: Vec<Entry> = read("history.json")
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or_default();
-        Self { dir, settings: Mutex::new(settings), history: Mutex::new(history) }
+        Self {
+            dir,
+            settings: Mutex::new(settings),
+            history: Mutex::new(history),
+        }
     }
 
     fn save<T: Serialize>(&self, name: &str, value: &T) {
         let Some(dir) = &self.dir else { return };
         let _ = fs::create_dir_all(dir);
-        let Ok(text) = serde_json::to_vec(value) else { return };
+        let Ok(text) = serde_json::to_vec(value) else {
+            return;
+        };
         let tmp = dir.join(format!("{name}.tmp"));
         if fs::write(&tmp, text).is_ok() {
             let _ = fs::rename(&tmp, dir.join(name));
@@ -148,8 +162,10 @@ impl Data {
                 && (e.url.starts_with("http://") || e.url.starts_with("https://"))
                 && e.url.contains("%s")
         });
-        let known = matches!(s.search.as_str(), "duckduckgo" | "google" | "bing" | "brave" | "ecosia")
-            || s.custom_engines.iter().any(|e| e.id == s.search);
+        let known = matches!(
+            s.search.as_str(),
+            "duckduckgo" | "google" | "bing" | "brave" | "ecosia"
+        ) || s.custom_engines.iter().any(|e| e.id == s.search);
         if !known {
             s.search = "duckduckgo".into();
         }
@@ -162,7 +178,10 @@ impl Data {
     pub fn search_url(&self, query: &str) -> String {
         let (engine, custom) = {
             let s = self.settings.lock().unwrap();
-            (s.search.clone(), s.custom_engines.iter().find(|e| e.id == s.search).cloned())
+            (
+                s.search.clone(),
+                s.custom_engines.iter().find(|e| e.id == s.search).cloned(),
+            )
         };
         if let Some(c) = custom {
             return c.url.replace("%s", &encode(query));
@@ -192,7 +211,8 @@ impl Data {
         }
         let (t, title) = (now(), title.trim());
         let mut h = self.history.lock().unwrap();
-        let dup = matches!(h.last(), Some(l) if l.url == url && t.saturating_sub(l.time) < DEDUPE_MS);
+        let dup =
+            matches!(h.last(), Some(l) if l.url == url && t.saturating_sub(l.time) < DEDUPE_MS);
         if dup {
             if !title.is_empty() {
                 if let Some(l) = h.last_mut() {
@@ -200,7 +220,11 @@ impl Data {
                 }
             }
         } else {
-            h.push(Entry { url: url.to_string(), title: title.to_string(), time: t });
+            h.push(Entry {
+                url: url.to_string(),
+                title: title.to_string(),
+                time: t,
+            });
             let extra = h.len().saturating_sub(MAX_HISTORY);
             h.drain(..extra);
         }
@@ -216,7 +240,11 @@ impl Data {
             .unwrap()
             .iter()
             .rev()
-            .filter(|e| q.is_empty() || e.title.to_lowercase().contains(&q) || e.url.to_lowercase().contains(&q))
+            .filter(|e| {
+                q.is_empty()
+                    || e.title.to_lowercase().contains(&q)
+                    || e.url.to_lowercase().contains(&q)
+            })
             .take(1000)
             .cloned()
             .collect()
@@ -234,12 +262,19 @@ impl Data {
             let sq = search_query(&e.url);
             let (key, hay) = match &sq {
                 Some(t) => (format!("q:{}", t.to_lowercase()), t.to_lowercase()),
-                None => (e.url.clone(), format!("{} {}", e.title, e.url).to_lowercase()),
+                None => (
+                    e.url.clone(),
+                    format!("{} {}", e.title, e.url).to_lowercase(),
+                ),
             };
             if !hay.contains(&q) || !seen.insert(key) {
                 continue;
             }
-            out.push(Suggestion { url: e.url.clone(), title: e.title.clone(), query: sq });
+            out.push(Suggestion {
+                url: e.url.clone(),
+                title: e.title.clone(),
+                query: sq,
+            });
             if out.len() >= limit {
                 break;
             }
