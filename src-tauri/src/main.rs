@@ -138,6 +138,7 @@ async fn new_tab(app: AppHandle, id: String, url: String) -> Result<(), String> 
     let target = match url.as_str() {
         "about:extensions" => WebviewUrl::App("extensions.html".into()),
         "about:settings" => WebviewUrl::App("settings.html".into()),
+        "about:new" => WebviewUrl::App("new.html".into()),
         _ => {
             let data = app.state::<data::Data>();
             WebviewUrl::External(
