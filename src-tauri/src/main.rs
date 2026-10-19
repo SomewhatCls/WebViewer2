@@ -79,11 +79,10 @@ fn configure(
     }
 }
 
+//parses different url types
 fn normalize(input: &str, data: &data::Data) -> String {
     let s = input.trim();
     if let Ok(u) = Url::parse(s) {
-        // chrome-extension:// lets extension pages (e.g. their settings) open in a tab.
-        // file:// lets local HTML files (e.g. opened from WebStorm) open in a tab.
         if matches!(u.scheme(), "http" | "https" | "file" | "chrome-extension") {
             return s.to_string();
         }
@@ -571,8 +570,7 @@ fn restart_app(app: AppHandle) {
 
 fn main() {
     tauri::Builder::default()
-        // Must be the first plugin. A second launch (e.g. from WebStorm) ends up here
-        // instead of starting a new process.
+        // captures new cli process launches as tabs in this instance
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             if let Some(url) = url_from_args(&args, Some(Path::new(&cwd))) {
                 let _ = app.emit("open-tab", url);
@@ -618,7 +616,7 @@ fn main() {
             win_close
         ])
         .setup(|app| {
-            // Unpacked Chrome extensions go in <app data dir>/extensions.
+            // unpacked Chrome extensions go in <app data dir>/extensions
             let base = app.path().app_data_dir().ok();
             let ext = base.as_ref().map(|d| d.join("extensions"));
             if let Some(dir) = &ext {
@@ -632,7 +630,7 @@ fn main() {
             app.manage(Suggest(std::sync::Mutex::new(0.0)));
             app.manage(data);
 
-            // URL / file path given on the command line (e.g. by WebStorm's "open in browser").
+            // url given in command line
             let launch = url_from_args(&std::env::args().collect::<Vec<_>>(), None);
             app.manage(Launch(std::sync::Mutex::new(launch)));
 
