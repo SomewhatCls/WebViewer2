@@ -387,7 +387,8 @@ syncMax();
 
   let launch, session;
   try { launch = await invoke("take_launch_url"); } catch {}
-  try { session = await invoke("load_session"); } catch {}
+  if (settings.save_session)
+    try { session = await invoke("load_session"); } catch {}
 
   // Reopen the previous tabs one after another (parallel webview creation is risky).
   for (const u of session?.tabs ?? []) await openTab(u);
