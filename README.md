@@ -10,6 +10,8 @@ Additionally, you can toggle session persistence, which saves your open tabs and
 Finally, the browser has cli support to enable development work, as well as the WebView2 development console.\
 the syntax for the cli is as follows: "WebViewer2.exe example.com". \
 To open the development console, use the shortcut "ctrl+shift+i".
+### Requirements
+As of now, this project requires both WebView2 as well as Windows 10/11 64bit.
 ### Design
 This browser tries to follow the [Fluent 2](https://fluent2.microsoft.design/) design language by Microsoft.
 To this end, it applies the Mica background effect as long as you are on Windows 11 with transparency turned on. An Example image is attached below.
