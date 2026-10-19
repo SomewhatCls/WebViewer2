@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "WebViewer2",
-  "version": "2.0.0",
   "identifier": "susu.webview2.browser",
   "build": { "frontendDist": "../src" },
   "app": {
