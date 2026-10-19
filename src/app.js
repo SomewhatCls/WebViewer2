@@ -3,7 +3,7 @@ const { listen } = window.__TAURI__.event;
 
 const $ = (s) => document.querySelector(s);
 const CLOSE_SVG = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>';
-const INTERNAL = new Set(["about:extensions", "about:settings"]);
+const INTERNAL = new Set(["about:extensions", "about:settings", "about:new"]);
 
 // Mirrors the Rust `Settings`; replaced by the saved values at startup.
 let settings = { theme: "system", search: "duckduckgo", home: "https://duckduckgo.com", save_history: true };
@@ -337,6 +337,7 @@ window.addEventListener("keydown", (e) => {
   else if (k === "w") { e.preventDefault(); active && closeTab(active); }
   else if (k === "l") { e.preventDefault(); addr.focus(); }
   else if (k === ",") { e.preventDefault(); openInternal("about:settings"); }
+  else if (k === "n") { e.preventDefault(); openInternal("about:new"); }
 });
 
 // Custom window frame: drag the empty strip, double-click to maximize.
