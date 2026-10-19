@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "IPC for the UI webview and our own local pages. Remote web content gets none (no `remote` block).",
+  "webviews": ["ui", "tab-*"],
+  "permissions": ["core:default"]
+}

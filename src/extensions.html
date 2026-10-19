@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Extensions</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="page">
+  <main>
+    <h1>Extensions</h1>
+    <div id="banner" class="banner" hidden>
+      <span>Some extensions couldn’t start right away. Restart the browser to finish.</span>
+      <button id="restart" class="primary">Restart now</button>
+    </div>
+    <form id="addform">
+      <input id="src" type="text" spellcheck="false" autocomplete="off" placeholder="Chrome Web Store link or extension ID" aria-label="Extension link or ID">
+      <button class="primary" type="submit">Add</button>
+    </form>
+    <p id="msg" role="status"></p>
+    <ul id="list"></ul>
+    <p class="hint">Extensions run in the background. Toolbar buttons and popups aren’t available in WebView2. Find extensions on the <a href="https://chromewebstore.google.com">Chrome Web Store</a>.</p>
+  </main>
+  <script src="ext.js"></script>
+</body>
+</html>

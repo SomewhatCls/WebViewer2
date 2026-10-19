@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"IPC for the UI webview and our own local pages. Remote web content gets none (no `remote` block).","local":true,"webviews":["ui","tab-*"],"permissions":["core:default"]}}
