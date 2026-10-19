@@ -1,7 +1,7 @@
 # WebViewer2
 ### Project Overview
-This is a simple, multi-tabbed browser, written with Rust in the Tauri framework. It utilizes Windows WebView2 for displaying web content. \
-Because of this, it is much more RAM-Efficient than a conventional browser.
+This is a simple, multi-tabbed browser, written with Rust in the Tauri framework. It utilizes [Microsoft WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2) for displaying web content. \
+Because of this, it is much more RAM-Efficient than a conventional browser on Windows.
 ### Features
 This Browser offers an optional browsing history, as well as the option to serve address bar suggestions from said history. \
 Chrome web extensions are supported. For this, about:extensions serves as a hub. Adding extensions works by either adding them directly through about:extensions or by visiting the Chrome web store and clicking the button in the navigation bar. \
