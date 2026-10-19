@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Settings</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="settings">
+  <nav id="nav" aria-label="Settings sections">
+    <h1>Settings</h1>
+    <button class="navitem" data-pane="general" aria-current="page">General</button>
+    <button class="navitem" data-pane="appearance">Appearance</button>
+    <button class="navitem" data-pane="privacy">Privacy and history</button>
+    <button class="navitem" data-pane="extensions">Extensions</button>
+    <button class="navitem" data-pane="about">About</button>
+  </nav>
+
+  <main id="content">
+    <section class="pane" id="pane-general">
+      <h2>General</h2>
+      <div class="card">
+        <div class="label"><strong>Search engine</strong><span>Used when you type a search in the address bar.</span></div>
+        <select id="search" class="field" aria-label="Search engine">
+          <option value="duckduckgo">DuckDuckGo</option>
+          <option value="google">Google</option>
+          <option value="bing">Bing</option>
+          <option value="brave">Brave Search</option>
+          <option value="ecosia">Ecosia</option>
+        </select>
+      </div>
+      <div class="card">
+        <div class="label"><strong>Home page</strong><span>Opens in every new tab.</span></div>
+        <input id="home" class="field wide" type="text" spellcheck="false" autocomplete="off" aria-label="Home page">
+      </div>
+
+      <h3 class="group">Custom search engines</h3>
+      <p class="empty">Add any site that has a search page. Put <code>%s</code> where the search terms go, for example <code>https://example.com/search?q=%s</code>. Added engines appear in the list above.</p>
+      <div id="elist"></div>
+      <div class="engine-add">
+        <input id="ename" class="field" type="text" spellcheck="false" autocomplete="off" placeholder="Name" aria-label="Search engine name">
+        <input id="eurl" class="field" type="text" spellcheck="false" autocomplete="off" placeholder="https://example.com/search?q=%s" aria-label="Search URL containing %s">
+        <button id="eadd" class="primary">Add</button>
+      </div>
+      <p id="emsg" class="empty" role="status"></p>
+    </section>
+
+    <section class="pane" id="pane-appearance" hidden>
+      <h2>Appearance</h2>
+      <div class="card">
+        <div class="label"><strong>Theme</strong><span>System follows your Windows setting.</span></div>
+        <select id="theme" class="field" aria-label="Theme">
+          <option value="system">System</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </div>
+    </section>
+
+    <section class="pane" id="pane-privacy" hidden>
+      <h2>Privacy and history</h2>
+      <div class="card">
+        <div class="label"><strong>Save browsing history</strong><span>Pages you visit, including searches, are listed below. Stored only on this device.</span></div>
+        <button id="savehist" class="switch" role="switch" aria-checked="true" aria-label="Save browsing history"></button>
+      </div>
+
+      <h3 class="group">History</h3>
+      <div class="htools">
+        <input id="hq" class="field" type="search" spellcheck="false" autocomplete="off" placeholder="Search history" aria-label="Search history">
+        <button id="clear" class="subtle">Clear browsing data…</button>
+      </div>
+      <div id="hlist"></div>
+      <p id="hempty" class="empty" hidden></p>
+    </section>
+
+    <section class="pane" id="pane-extensions" hidden>
+      <h2>Extensions</h2>
+      <div class="card">
+        <div class="label"><strong>Chrome Web Store</strong><span>Find extensions, then select Add to browser on an extension’s page.</span></div>
+        <button id="store" class="subtle">Open Web Store</button>
+      </div>
+      <div class="card">
+        <div class="label"><strong>Manage extensions</strong><span>Add extensions from the Chrome Web Store or remove installed ones.</span></div>
+        <button id="manage" class="subtle">Open</button>
+      </div>
+      <h3 class="group">Installed</h3>
+      <div id="xlist"></div>
+      <p id="xmsg" class="empty" role="status"></p>
+    </section>
+
+    <section class="pane" id="pane-about" hidden>
+      <h2>About</h2>
+      <div class="card">
+        <div class="label"><strong>WebViewer2</strong><span>A tabbed browser built with Tauri.</span></div>
+        <span class="value">1.0.0</span>
+      </div>
+      <div class="card">
+        <div class="label"><strong>WebView2 runtime</strong><span>The engine that renders pages and runs extensions.</span></div>
+        <span id="wv" class="value">…</span>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="dlg" aria-labelledby="dlg-title">
+    <h2 id="dlg-title">Clear browsing history</h2>
+    <p>Choose how much history to remove from this device.</p>
+    <select id="range" class="field" aria-label="Time range">
+      <option value="hour">Last hour</option>
+      <option value="day">Last 24 hours</option>
+      <option value="week">Last 7 days</option>
+      <option value="all" selected>All time</option>
+    </select>
+    <div class="actions">
+      <button id="dlg-cancel" class="subtle">Cancel</button>
+      <button id="dlg-ok" class="primary">Clear now</button>
+    </div>
+  </dialog>
+
+  <script src="settings.js"></script>
+</body>
+</html>

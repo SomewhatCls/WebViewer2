@@ -19,6 +19,17 @@ async function load() {
     const meta = document.createElement("span");
     meta.textContent = `${e.version} · ${e.active ? "On" : "Starts after restart"}`;
     text.append(name, meta);
+    const opts = document.createElement("button");
+    opts.className = "subtle";
+    opts.textContent = "Settings";
+    opts.disabled = !e.options || !e.active;
+    opts.title = !e.options
+      ? "This extension has no settings page"
+      : !e.active ? "Restart the browser to start this extension" : "";
+    opts.onclick = async () => {
+      try { await invoke("open_extension_options", { id: e.id }); }
+      catch (err) { $("#msg").textContent = String(err); }
+    };
     const rm = document.createElement("button");
     rm.className = "subtle";
     rm.textContent = "Remove";
@@ -27,7 +38,10 @@ async function load() {
       catch (err) { $("#msg").textContent = String(err); }
       load();
     };
-    li.append(text, rm);
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    actions.append(opts, rm);
+    li.append(text, actions);
     list.append(li);
   }
   $("#banner").hidden = !exts.some((e) => !e.active);

@@ -3,6 +3,7 @@
 #[cfg(not(windows))]
 compile_error!("WebViewer2 requires Windows WebView2.");
 
+mod data;
 mod live;
 mod store;
 
@@ -10,9 +11,9 @@ use serde::Serialize;
 use std::path::PathBuf;
 use tauri::{
     webview::{NewWindowResponse, PageLoadEvent, WebviewBuilder},
-    window::WindowBuilder,
-    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Position, Size, Url, Window,
-    WindowEvent, WebviewUrl,
+    window::{Effect, EffectsBuilder, WindowBuilder},
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Position, Size, Theme, Url,
+    WebviewUrl, Window, WindowEvent,
 };
 
 /// Height (logical px) of the UI webview: 40 tab strip + 44 toolbar.
@@ -22,6 +23,13 @@ struct Ext(Option<PathBuf>);
 
 /// IDs of the extensions loaded into the running WebView2 profile.
 struct Loaded(std::sync::Mutex<Vec<String>>);
+
+/// Whether the Mica backdrop could be applied (Windows 11 only).
+struct Mica(bool);
+
+/// Extra height (logical px) the UI webview grows by while the address-bar suggestions are open.
+/// Page webviews slide down by the same amount so the list is not covered by them.
+struct Suggest(std::sync::Mutex<f64>);
 
 #[derive(Clone, Serialize)]
 struct TabUpdate {
@@ -44,10 +52,11 @@ fn configure(b: WebviewBuilder<tauri::Wry>, ext: &Option<PathBuf>) -> WebviewBui
     }
 }
 
-fn normalize(input: &str) -> String {
+fn normalize(input: &str, data: &data::Data) -> String {
     let s = input.trim();
     if let Ok(u) = Url::parse(s) {
-        if matches!(u.scheme(), "http" | "https") {
+        // chrome-extension:// lets extension pages (e.g. their settings) open in a tab.
+        if matches!(u.scheme(), "http" | "https" | "chrome-extension") {
             return s.to_string();
         }
     }
@@ -59,9 +68,16 @@ fn normalize(input: &str) -> String {
             return format!("https://{s}");
         }
     }
-    Url::parse_with_params("https://duckduckgo.com/", &[("q", s)])
-        .map(|u| u.to_string())
-        .unwrap_or_else(|_| "https://duckduckgo.com/".into())
+    data.search_url(s)
+}
+
+fn apply_theme(window: &Window, theme: &str) {
+    let t = match theme {
+        "light" => Some(Theme::Light),
+        "dark" => Some(Theme::Dark),
+        _ => None, // follow the system
+    };
+    let _ = window.set_theme(t);
 }
 
 fn layout(window: &Window) {
@@ -70,11 +86,13 @@ fn layout(window: &Window) {
     };
     let size = px.to_logical::<f64>(scale);
     let content_h = (size.height - CHROME_H).max(0.0);
+    let extra = *window.app_handle().state::<Suggest>().0.lock().unwrap();
     for (name, wv) in window.app_handle().webviews() {
         if name == "ui" {
-            let _ = wv.set_size(Size::Logical(LogicalSize::new(size.width, CHROME_H)));
+            let _ = wv.set_size(Size::Logical(LogicalSize::new(size.width, CHROME_H + extra)));
         } else if name.starts_with("tab-") {
-            let _ = wv.set_position(Position::Logical(LogicalPosition::new(0.0, CHROME_H)));
+            // Only moved, not resized: the page keeps its layout while the suggestion list is open.
+            let _ = wv.set_position(Position::Logical(LogicalPosition::new(0.0, CHROME_H + extra)));
             let _ = wv.set_size(Size::Logical(LogicalSize::new(size.width, content_h)));
         }
     }
@@ -104,10 +122,13 @@ async fn new_tab(app: AppHandle, id: String, url: String) -> Result<(), String> 
     let window = app.get_window("main").ok_or("main window missing")?;
     let scale = window.scale_factor().map_err(|e| e.to_string())?;
     let size = window.inner_size().map_err(|e| e.to_string())?.to_logical::<f64>(scale);
-    let target = if url == "about:extensions" {
-        WebviewUrl::App("extensions.html".into())
-    } else {
-        WebviewUrl::External(normalize(&url).parse::<Url>().map_err(|e| e.to_string())?)
+    let target = match url.as_str() {
+        "about:extensions" => WebviewUrl::App("extensions.html".into()),
+        "about:settings" => WebviewUrl::App("settings.html".into()),
+        _ => {
+            let data = app.state::<data::Data>();
+            WebviewUrl::External(normalize(&url, &data).parse::<Url>().map_err(|e| e.to_string())?)
+        }
     };
     let ext = app.state::<Ext>().0.clone();
 
@@ -118,6 +139,11 @@ async fn new_tab(app: AppHandle, id: String, url: String) -> Result<(), String> 
 
     let builder = WebviewBuilder::new(label(&id), target)
         .on_navigation(move |u| {
+            // Some extension pages get bounced to Chrome's built-in new tab page
+            // (chrome-search://local-ntp/...), which doesn't exist in WebView2. Cancel that.
+            if u.scheme() == "chrome-search" {
+                return false;
+            }
             emit_tab(&a1, TabUpdate { id: i1.clone(), url: Some(u.to_string()), title: None, loading: None });
             true
         })
@@ -164,7 +190,10 @@ async fn close_tab(app: AppHandle, id: String) {
 #[tauri::command]
 async fn navigate(app: AppHandle, id: String, input: String) -> Result<(), String> {
     let wv = app.get_webview(&label(&id)).ok_or("no such tab")?;
-    let url = normalize(&input).parse::<Url>().map_err(|e| e.to_string())?;
+    let url = {
+        let data = app.state::<data::Data>();
+        normalize(&input, &data).parse::<Url>().map_err(|e| e.to_string())?
+    };
     wv.navigate(url).map_err(|e| e.to_string())
 }
 
@@ -210,6 +239,82 @@ async fn win_close(window: Window) {
 }
 
 #[tauri::command]
+fn has_mica(app: AppHandle) -> bool {
+    app.state::<Mica>().0
+}
+
+// --- Settings -------------------------------------------------------------------
+
+#[tauri::command]
+fn get_settings(app: AppHandle) -> data::Settings {
+    app.state::<data::Data>().settings()
+}
+
+#[tauri::command]
+async fn set_settings(app: AppHandle, settings: data::Settings) -> Result<(), String> {
+    let saved = app.state::<data::Data>().set_settings(settings);
+    if let Some(w) = app.get_window("main") {
+        apply_theme(&w, &saved.theme);
+    }
+    app.emit("settings-changed", saved).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn about_webview() -> String {
+    tauri::webview_version().unwrap_or_else(|_| "unknown".into())
+}
+
+/// Opens an internal page or a web address in the browser's tab strip.
+#[tauri::command]
+fn open_page(app: AppHandle, url: String) {
+    if url.starts_with("about:") || url.starts_with("http://") || url.starts_with("https://") {
+        let _ = app.emit("open-tab", url);
+    }
+}
+
+// --- History --------------------------------------------------------------------
+
+#[tauri::command]
+fn history_add(app: AppHandle, url: String, title: String) {
+    if app.state::<data::Data>().add_history(&url, &title) {
+        let _ = app.emit("history-updated", ());
+    }
+}
+
+#[tauri::command]
+fn history_suggest(app: AppHandle, query: String) -> Vec<data::Suggestion> {
+    app.state::<data::Data>().suggest(&query, 6)
+}
+
+/// Grows (or shrinks back) the UI webview for the address-bar suggestion list.
+#[tauri::command]
+async fn set_suggest_height(app: AppHandle, height: f64) {
+    *app.state::<Suggest>().0.lock().unwrap() = height.clamp(0.0, 400.0);
+    if let Some(w) = app.get_window("main") {
+        layout(&w);
+    }
+}
+
+#[tauri::command]
+fn history_list(app: AppHandle, query: String) -> Vec<data::Entry> {
+    app.state::<data::Data>().history(&query)
+}
+
+#[tauri::command]
+fn history_remove(app: AppHandle, time: u64, url: String) {
+    app.state::<data::Data>().remove(time, &url);
+    let _ = app.emit("history-updated", ());
+}
+
+#[tauri::command]
+fn history_clear(app: AppHandle, range: String) {
+    app.state::<data::Data>().clear(&range);
+    let _ = app.emit("history-updated", ());
+}
+
+// --- Extensions -----------------------------------------------------------------
+
+#[tauri::command]
 async fn install_extension(app: AppHandle, input: String) -> Result<store::ExtInfo, String> {
     store::install(&app, &input).await
 }
@@ -224,6 +329,13 @@ async fn remove_extension(app: AppHandle, id: String) -> Result<(), String> {
     store::remove(&app, &id).await
 }
 
+/// Opens the extension's options page (chrome-extension://<id>/<page>) in a new tab.
+#[tauri::command]
+async fn open_extension_options(app: AppHandle, id: String) -> Result<(), String> {
+    let url = store::options_url(&app, &id).await?;
+    app.emit("open-tab", url).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn restart_app(app: AppHandle) {
     app.restart();
@@ -233,18 +345,26 @@ fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             new_tab, activate_tab, close_tab, navigate, nav,
-            install_extension, list_extensions, remove_extension, restart_app,
+            install_extension, list_extensions, remove_extension, open_extension_options, restart_app,
+            get_settings, set_settings, about_webview, open_page,
+            history_add, history_list, history_suggest, history_remove, history_clear, set_suggest_height,
+            has_mica,
             win_minimize, win_toggle_maximize, win_is_maximized, win_drag, win_close
         ])
         .setup(|app| {
             // Unpacked Chrome extensions go in <app data dir>/extensions.
-            let ext = app.path().app_data_dir().ok().map(|d| d.join("extensions"));
+            let base = app.path().app_data_dir().ok();
+            let ext = base.as_ref().map(|d| d.join("extensions"));
             if let Some(dir) = &ext {
                 let _ = std::fs::create_dir_all(dir);
             }
             let loaded = ext.as_deref().map(store::prepare).unwrap_or_default();
+            let data = data::Data::load(base);
+            let theme = data.settings().theme;
             app.manage(Ext(ext.clone()));
             app.manage(Loaded(std::sync::Mutex::new(loaded)));
+            app.manage(Suggest(std::sync::Mutex::new(0.0)));
+            app.manage(data);
 
             let window = WindowBuilder::new(app, "main")
                 .title("WebViewer2")
@@ -253,12 +373,24 @@ fn main() {
                 // Custom frame: the tab strip is the title bar. With shadow(true), Windows keeps
                 // native resize handles outside the client area and rounds corners on Windows 11.
                 .decorations(false)
+                // Transparent so the Mica backdrop can show through the (transparent) UI webview.
+                .transparent(true)
                 .shadow(true)
                 .build()?;
 
+            // Mica needs Windows 11; on Windows 10 this fails and the UI keeps a solid strip.
+            let mica = window
+                .set_effects(EffectsBuilder::new().effect(Effect::Mica).build())
+                .is_ok();
+            app.manage(Mica(mica));
+            apply_theme(&window, &theme);
+
             let size = window.inner_size()?.to_logical::<f64>(window.scale_factor()?);
             window.add_child(
-                configure(WebviewBuilder::new("ui", WebviewUrl::App("index.html".into())), &ext),
+                configure(
+                    WebviewBuilder::new("ui", WebviewUrl::App("index.html".into())).transparent(true),
+                    &ext,
+                ),
                 LogicalPosition::new(0.0, 0.0),
                 LogicalSize::new(size.width, CHROME_H),
             )?;

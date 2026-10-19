@@ -2,20 +2,32 @@ const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
 const $ = (s) => document.querySelector(s);
-const HOME = "https://duckduckgo.com";
 const CLOSE_SVG = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+const INTERNAL = new Set(["about:extensions", "about:settings"]);
+
+// Mirrors the Rust `Settings`; replaced by the saved values at startup.
+let settings = { theme: "system", search: "duckduckgo", home: "https://duckduckgo.com", save_history: true };
+
+function applyTheme() {
+  const t = settings.theme;
+  if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+  else delete document.documentElement.dataset.theme;
+}
 
 // Web Store detail pages look like /detail/<slug>/<32-letter id>
 const storeId = (url) =>
   /^https:\/\/chromewebstore\.google\.com\/detail\/[^/]+\/([a-p]{32})/.exec(url ?? "")?.[1] ?? null;
 // Our own pages are served from tauri.localhost; show a friendly address.
-const shown = (url) => (/^https?:\/\/tauri\.localhost\/extensions\.html/.test(url ?? "") ? "about:extensions" : url ?? "");
+const shown = (url) => {
+  const m = /^https?:\/\/tauri\.localhost\/(extensions|settings)\.html/.exec(url ?? "");
+  return m ? `about:${m[1]}` : url ?? "";
+};
 
 const tabs = new Map(); // id -> { title, url, loading }
 let active = null;
 let seq = 0;
 
-async function openTab(url = HOME) {
+async function openTab(url = settings.home) {
   const id = "t" + ++seq;
   tabs.set(id, { title: "New tab", url, loading: true });
   active = id;
@@ -27,6 +39,12 @@ async function openTab(url = HOME) {
     tabs.get(id).loading = false;
     render();
   }
+}
+
+// Internal pages (settings, extensions) reuse an already-open tab.
+function openInternal(url) {
+  const found = [...tabs].find(([, t]) => t.url === url || shown(t.url) === url);
+  found ? activate(found[0]) : openTab(url);
 }
 
 function activate(id) {
@@ -77,9 +95,23 @@ function render() {
   $("#add").hidden = !storeId(t?.url);
 }
 
+// Adds a finished page load to the history (the backend ignores internal pages and dedupes).
+function record(t) {
+  if (!settings.save_history || t.loading) return;
+  let u;
+  try { u = new URL(t.url); } catch { return; }
+  if (!/^https?:$/.test(u.protocol) || u.hostname === "tauri.localhost") return;
+  invoke("history_add", { url: t.url, title: t.title === "New tab" ? "" : t.title });
+}
+
 listen("tab-updated", ({ payload: p }) => {
   const t = tabs.get(p.id);
   if (!t) return;
+  // Safety net: if a bounce to Chrome's new tab page slips past the backend, step back once.
+  if (p.url?.startsWith("chrome-search://")) {
+    if (!t.bounced) { t.bounced = true; invoke("nav", { id: p.id, action: "back" }); }
+    return;
+  }
   if (p.url != null) {
     t.url = p.url;
     if (t.title === "New tab") {
@@ -89,16 +121,20 @@ listen("tab-updated", ({ payload: p }) => {
   if (p.title) t.title = p.title;
   if (p.loading != null) t.loading = p.loading;
   render();
+  // Record when a load finishes, and again if the title arrives afterwards.
+  if (p.loading === false || (p.title && !t.loading)) record(t);
 });
 
-listen("open-tab", ({ payload: url }) => openTab(url));
+listen("open-tab", ({ payload: url }) => (INTERNAL.has(url) ? openInternal(url) : openTab(url)));
+listen("settings-changed", ({ payload }) => { settings = payload; applyTheme(); });
 
 const nav = (action) => active && invoke("nav", { id: active, action });
 $("#back").onclick = () => nav("back");
 $("#fwd").onclick = () => nav("forward");
 $("#reload").onclick = () => nav("reload");
 $("#new").onclick = () => openTab();
-$("#ext").onclick = () => openTab("about:extensions");
+$("#ext").onclick = () => openInternal("about:extensions");
+$("#settings").onclick = () => openInternal("about:settings");
 
 $("#add").onclick = async () => {
   const btn = $("#add");
@@ -119,14 +155,103 @@ $("#add").onclick = async () => {
   btn.title = "";
 };
 
+// ---------- Address-bar suggestions (from the history) ----------
+// The UI webview is only 84px tall, so while the list is open it grows by the list's height
+// and the page webviews slide down by the same amount (see `set_suggest_height` in main.rs).
+const ROW_H = 40, PAD = 8;
+const SEARCH_SVG = '<svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg>';
+const PAGE_SVG = '<svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></svg>';
+let rows = [];
+let sel = -1;
+let suggestTimer = 0;
+let suggestSeq = 0;
+
+function closeSuggest() {
+  clearTimeout(suggestTimer);
+  suggestSeq++; // drop any answer still on its way
+  if (!rows.length) return;
+  rows = [];
+  sel = -1;
+  $("#suggest").hidden = true;
+  invoke("set_suggest_height", { height: 0 });
+}
+
+function paintSuggest() {
+  const box = $("#suggest");
+  box.replaceChildren();
+  rows.forEach((r, i) => {
+    const el = document.createElement("div");
+    el.className = "srow" + (i === sel ? " sel" : "");
+    el.setAttribute("role", "option");
+
+    const ico = document.createElement("span");
+    ico.className = "sico";
+    ico.innerHTML = r.query != null ? SEARCH_SVG : PAGE_SVG;
+
+    const main = document.createElement("span");
+    main.className = "smain";
+    if (r.query != null) {
+      main.textContent = r.query;
+    } else {
+      let host = r.url;
+      try { host = new URL(r.url).hostname.replace(/^www\./, ""); } catch {}
+      const t = document.createElement("span");
+      t.className = "stitle";
+      t.textContent = r.title || host;
+      const u = document.createElement("span");
+      u.className = "surl";
+      u.textContent = host;
+      main.append(t, u);
+    }
+    el.append(ico, main);
+    // mousedown (not click) so the address box keeps focus and its blur does not close the list first
+    el.onmousedown = (e) => { e.preventDefault(); pick(r); };
+    box.append(el);
+  });
+}
+
+function pick(r) {
+  addr.value = r.url;
+  closeSuggest();
+  if (active) invoke("navigate", { id: active, input: r.url });
+  addr.blur();
+}
+
+async function updateSuggest() {
+  const q = addr.value.trim();
+  const seq = ++suggestSeq;
+  if (!q || INTERNAL.has(q)) return closeSuggest();
+  let list = [];
+  try { list = await invoke("history_suggest", { query: q }); } catch {}
+  if (seq !== suggestSeq || document.activeElement !== addr) return; // stale answer
+  if (!list.length) { suggestSeq++; return closeSuggest(); }
+  rows = list;
+  sel = -1;
+  paintSuggest();
+  $("#suggest").hidden = false;
+  invoke("set_suggest_height", { height: rows.length * ROW_H + PAD });
+}
+
 const addr = $("#addr");
 addr.onfocus = () => addr.select();
+addr.oninput = () => { clearTimeout(suggestTimer); suggestTimer = setTimeout(updateSuggest, 60); };
+addr.onblur = () => closeSuggest();
 addr.onkeydown = (e) => {
-  if (e.key === "Enter" && active && addr.value.trim()) {
-    if (addr.value.trim() === "about:extensions") openTab("about:extensions");
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    if (!rows.length) return;
+    e.preventDefault();
+    const n = rows.length;
+    sel = e.key === "ArrowDown" ? (sel + 1) % n : (sel - 1 + n) % n;
+    paintSuggest();
+  } else if (e.key === "Enter" && active && addr.value.trim()) {
+    if (sel >= 0 && rows[sel]) return pick(rows[sel]);
+    const v = addr.value.trim();
+    closeSuggest();
+    if (INTERNAL.has(v)) openInternal(v);
     else invoke("navigate", { id: active, input: addr.value });
     addr.blur();
   } else if (e.key === "Escape") {
+    closeSuggest();
     addr.blur();
     render();
   }
@@ -139,6 +264,7 @@ window.addEventListener("keydown", (e) => {
   if (k === "t") { e.preventDefault(); openTab(); }
   else if (k === "w") { e.preventDefault(); active && closeTab(active); }
   else if (k === "l") { e.preventDefault(); addr.focus(); }
+  else if (k === ",") { e.preventDefault(); openInternal("about:settings"); }
 });
 
 // Custom window frame: drag the empty strip, double-click to maximize.
@@ -161,4 +287,10 @@ async function syncMax() {
 window.addEventListener("resize", syncMax); // the UI webview resizes with the window
 syncMax();
 
-openTab();
+(async () => {
+  try { settings = await invoke("get_settings"); } catch {}
+  applyTheme();
+  // Mica is only available on Windows 11; without it the strip keeps a solid colour.
+  try { if (await invoke("has_mica")) document.documentElement.classList.add("mica"); } catch {}
+  openTab();
+})();

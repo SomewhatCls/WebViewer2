@@ -15,9 +15,9 @@ use webview2_com::{
 use windows::core::{Interface, HSTRING, PWSTR};
 
 /// One-shot reply slot, shared between the call site and the COM completion handler.
-type Reply = Rc<RefCell<Option<oneshot::Sender<Result<(), String>>>>>;
+type Reply<T> = Rc<RefCell<Option<oneshot::Sender<Result<T, String>>>>>;
 
-fn finish(reply: &Reply, value: Result<(), String>) {
+fn finish<T>(reply: &Reply<T>, value: Result<T, String>) {
     if let Some(tx) = reply.borrow_mut().take() {
         let _ = tx.send(value);
     }
@@ -30,14 +30,15 @@ fn profile(pw: &PlatformWebview) -> windows::core::Result<ICoreWebView2Profile7>
 }
 
 /// Runs `f` on the UI thread with the profile, then waits for `f` to call `finish`.
-async fn on_profile<F>(app: &AppHandle, f: F) -> Result<(), String>
+async fn on_profile<T, F>(app: &AppHandle, f: F) -> Result<T, String>
 where
-    F: FnOnce(ICoreWebView2Profile7, Reply) + Send + 'static,
+    T: Send + 'static,
+    F: FnOnce(ICoreWebView2Profile7, Reply<T>) + Send + 'static,
 {
     let ui = app.get_webview("ui").ok_or("UI webview missing")?;
     let (tx, rx) = oneshot::channel();
     ui.with_webview(move |pw| {
-        let reply: Reply = Rc::new(RefCell::new(Some(tx)));
+        let reply: Reply<T> = Rc::new(RefCell::new(Some(tx)));
         match profile(&pw) {
             Ok(p) => f(p, reply),
             Err(e) => finish(&reply, Err(e.to_string())),
@@ -101,6 +102,38 @@ pub async fn remove(app: &AppHandle, id: &str) -> Result<(), String> {
                 Ok(false) => finish(&r, Ok(())),
                 Err(e) => finish(&r, Err(e.to_string())),
             }
+            Ok(())
+        }));
+        if let Err(e) = unsafe { profile.GetBrowserExtensions(&handler) } {
+            finish(&reply, Err(e.to_string()));
+        }
+    })
+    .await
+}
+
+/// `(id, name)` of every extension loaded in the running profile. The id here is the one
+/// WebView2 actually uses in `chrome-extension://<id>/` URLs.
+pub async fn list(app: &AppHandle) -> Result<Vec<(String, String)>, String> {
+    on_profile(app, move |profile, reply| {
+        let r = reply.clone();
+        let handler = ProfileGetBrowserExtensionsCompletedHandler::create(Box::new(move |res, list| {
+            let outcome = (|| -> windows::core::Result<Vec<(String, String)>> {
+                res?;
+                let list = list.ok_or_else(|| windows::core::Error::from(windows::core::HRESULT(0x8000_4003_u32 as i32)))?; // E_POINTER
+                let mut count = 0u32;
+                unsafe { list.Count(&mut count)? };
+                let mut out = vec![];
+                for i in 0..count {
+                    let ext = unsafe { list.GetValueAtIndex(i)? };
+                    let mut id = PWSTR::null();
+                    unsafe { ext.Id(&mut id)? };
+                    let mut name = PWSTR::null();
+                    unsafe { ext.Name(&mut name)? };
+                    out.push((take_pwstr(id), take_pwstr(name)));
+                }
+                Ok(out)
+            })();
+            finish(&r, outcome.map_err(|e| e.to_string()));
             Ok(())
         }));
         if let Err(e) = unsafe { profile.GetBrowserExtensions(&handler) } {

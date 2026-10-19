@@ -22,6 +22,8 @@ pub struct ExtInfo {
     version: String,
     /// true if it is loaded in the running WebView2 profile; false means a restart is needed.
     active: bool,
+    /// true if the manifest declares an options/settings page.
+    options: bool,
 }
 
 fn is_id(s: &str) -> bool {
@@ -239,7 +241,42 @@ fn info(app: &AppHandle, dir: &Path) -> Option<ExtInfo> {
         let loaded = state.0.lock().unwrap();
         loaded.contains(&id)
     };
-    Some(ExtInfo { version: m["version"].as_str().unwrap_or("").to_string(), active, id, name })
+    Some(ExtInfo {
+        version: m["version"].as_str().unwrap_or("").to_string(),
+        active,
+        options: options_page(&m).is_some(),
+        id,
+        name,
+    })
+}
+
+/// Relative path of the extension's settings page (MV3 `options_ui`, or MV2 `options_page`).
+fn options_page(m: &Value) -> Option<String> {
+    let p = m["options_ui"]["page"].as_str().or_else(|| m["options_page"].as_str())?;
+    let p = p.trim_start_matches('/');
+    (!p.is_empty()).then(|| p.to_string())
+}
+
+/// `chrome-extension://<id>/<options page>` for an extension that WebView2 has loaded.
+/// The ID comes from WebView2 itself, so it is right even if it differs from the folder name.
+pub async fn options_url(app: &AppHandle, id: &str) -> Result<String, String> {
+    if !is_id(id) {
+        return Err("Invalid extension ID".into());
+    }
+    let dir = root(app)?.join(id);
+    let m = read_json(&dir.join("manifest.json")).ok_or("Extension not found")?;
+    let page = options_page(&m).ok_or("This extension has no settings page")?;
+    let raw = m["name"].as_str().unwrap_or("").to_string();
+    let resolved = info(app, &dir).map(|i| i.name).unwrap_or_default();
+
+    let loaded = live::list(app).await.map_err(|e| format!("Couldn’t read the loaded extensions: {e}"))?;
+    let real = loaded
+        .iter()
+        .find(|(lid, _)| lid == id)
+        .or_else(|| loaded.iter().find(|(_, n)| *n == raw || *n == resolved))
+        .map(|(lid, _)| lid.clone())
+        .ok_or("WebView2 hasn’t loaded this extension. Restart the browser and try again.")?;
+    Ok(format!("chrome-extension://{real}/{page}"))
 }
 
 pub fn list(app: &AppHandle) -> Vec<ExtInfo> {
