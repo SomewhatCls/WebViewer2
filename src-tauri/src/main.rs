@@ -260,11 +260,13 @@ fn restore_window(window: &Window, ws: &WinState) {
     }
 }
 
+///loads a session from persistent storage.
 #[tauri::command]
 fn load_session(app: AppHandle) -> Session {
     app.state::<SessionState>().0.lock().unwrap().clone()
 }
 
+///Deletes the session from persistent storage to prevent unnecessary data retention.
 #[tauri::command]
 fn delete_session(app: AppHandle, state: State<'_, SessionState>) -> Result<(), String> {
     //Lock and completely reset the in-memory runtime session state
@@ -286,7 +288,7 @@ fn delete_session(app: AppHandle, state: State<'_, SessionState>) -> Result<(), 
     Ok(())
 }
 
-
+///saves the open tabs into persistent storage.
 #[tauri::command]
 fn save_tabs(app: AppHandle, tabs: Vec<String>, active: usize) {
     {
@@ -298,12 +300,14 @@ fn save_tabs(app: AppHandle, tabs: Vec<String>, active: usize) {
     persist(&app);
 }
 
+///takes the apps launch argument
 #[tauri::command]
 fn take_launch_url(app: AppHandle) -> Option<String> {
     app.state::<Launch>().0.lock().unwrap().take()
 }
 
-// Commands are async: creating webviews from sync commands deadlocks on Windows.
+/// creates a new tab. This function handles about: urls seperately, to parse them to their actual
+///local path. for extension settings, it prevents their redirection to chrome exclusive urls.
 #[tauri::command]
 async fn new_tab(app: AppHandle, id: String, url: String) -> Result<(), String> {
     let window = app.get_window("main").ok_or("main window missing")?;
@@ -335,7 +339,7 @@ async fn new_tab(app: AppHandle, id: String, url: String) -> Result<(), String> 
     let builder = WebviewBuilder::new(label(&id), target)
         .on_navigation(move |u| {
             // Some extension pages get bounced to Chrome's built-in new tab page
-            // (chrome-search://local-ntp/...), which doesn't exist in WebView2. Cancel that.
+            // (chrome-search://local-ntp/...), which doesn't exist in WebView2
             if u.scheme() == "chrome-search" {
                 return false;
             }
@@ -389,11 +393,13 @@ async fn new_tab(app: AppHandle, id: String, url: String) -> Result<(), String> 
     Ok(())
 }
 
+///shows the given tabs contents.
 #[tauri::command]
 async fn activate_tab(app: AppHandle, id: String) {
     show_only(&app, &id);
 }
 
+///closes a tab.
 #[tauri::command]
 fn close_tab(app: AppHandle, id: String) -> Result<(), String> {
     if let Some(wv) = app.get_webview(&label(&id)) {
@@ -404,12 +410,14 @@ fn close_tab(app: AppHandle, id: String) -> Result<(), String> {
     Ok(())
 }
 
+///trigers the closing of the app. This happens for example, when the last tab is closed.
 #[tauri::command]
 fn exit_app(app: tauri::AppHandle) {
     persist(&app);
     app.exit(0);
 }
 
+///this is the navigation bar.
 #[tauri::command]
 async fn navigate(app: AppHandle, id: String, input: String) -> Result<(), String> {
     let wv = app.get_webview(&label(&id)).ok_or("no such tab")?;
@@ -422,6 +430,7 @@ async fn navigate(app: AppHandle, id: String, input: String) -> Result<(), Strin
     wv.navigate(url).map_err(|e| e.to_string())
 }
 
+///this is the navbar
 #[tauri::command]
 async fn nav(app: AppHandle, id: String, action: String) -> Result<(), String> {
     let wv = app.get_webview(&label(&id)).ok_or("no such tab")?;
@@ -434,6 +443,7 @@ async fn nav(app: AppHandle, id: String, action: String) -> Result<(), String> {
     wv.eval(js).map_err(|e| e.to_string())
 }
 
+///minimizes the current window.
 #[tauri::command]
 async fn win_minimize(window: Window) {
     let _ = window.minimize();
@@ -448,21 +458,25 @@ async fn win_toggle_maximize(window: Window) {
     }
 }
 
+///returns if the current window is maximized.
 #[tauri::command]
 async fn win_is_maximized(window: Window) -> bool {
     window.is_maximized().unwrap_or(false)
 }
 
+///handles drag action for window movements.
 #[tauri::command]
 async fn win_drag(window: Window) {
     let _ = window.start_dragging();
 }
 
+///closes the window.
 #[tauri::command]
 async fn win_close(window: Window) {
     let _ = window.close();
 }
 
+///queries wether the system has "mica", on Windows 11 this checks if transparency is enabled.
 #[tauri::command]
 fn has_mica(app: AppHandle) -> bool {
     app.state::<Mica>().0
@@ -470,11 +484,13 @@ fn has_mica(app: AppHandle) -> bool {
 
 // --- Settings -------------------------------------------------------------------
 
+///provides settings from the saved settings in settings.json
 #[tauri::command]
 fn get_settings(app: AppHandle) -> data::Settings {
     app.state::<data::Data>().settings()
 }
 
+///sets new setting/s
 #[tauri::command]
 async fn set_settings(app: AppHandle, settings: data::Settings) -> Result<(), String> {
     let saved = app.state::<data::Data>().set_settings(settings);
@@ -485,6 +501,7 @@ async fn set_settings(app: AppHandle, settings: data::Settings) -> Result<(), St
         .map_err(|e| e.to_string())
 }
 
+///provides the webview version for display in html.
 #[tauri::command]
 fn about_webview() -> String {
     tauri::webview_version().unwrap_or_else(|_| "unknown".into())
@@ -500,6 +517,7 @@ fn open_page(app: AppHandle, url: String) {
 
 // --- History --------------------------------------------------------------------
 
+///adds an entry to the browsing history.
 #[tauri::command]
 fn history_add(app: AppHandle, url: String, title: String) {
     if app.state::<data::Data>().add_history(&url, &title) {
@@ -521,17 +539,20 @@ async fn set_suggest_height(app: AppHandle, height: f64) {
     }
 }
 
+///provides a list of all entries in the browsing history for display in html.
 #[tauri::command]
 fn history_list(app: AppHandle, query: String) -> Vec<data::Entry> {
     app.state::<data::Data>().history(&query)
 }
 
+///removes history entry
 #[tauri::command]
 fn history_remove(app: AppHandle, time: u64, url: String) {
     app.state::<data::Data>().remove(time, &url);
     let _ = app.emit("history-updated", ());
 }
 
+///deletes history within given range.
 #[tauri::command]
 fn history_clear(app: AppHandle, range: String) {
     app.state::<data::Data>().clear(&range);
@@ -540,16 +561,19 @@ fn history_clear(app: AppHandle, range: String) {
 
 // --- Extensions -----------------------------------------------------------------
 
+///hands the given extension to store.rs for installation handling
 #[tauri::command]
 async fn install_extension(app: AppHandle, input: String) -> Result<store::ExtInfo, String> {
     store::install(&app, &input).await
 }
 
+///provides a list of installed extensions for display in html.
 #[tauri::command]
 async fn list_extensions(app: AppHandle) -> Vec<store::ExtInfo> {
     store::list(&app)
 }
 
+///removes extension file.
 #[tauri::command]
 async fn remove_extension(app: AppHandle, id: String) -> Result<(), String> {
     store::remove(&app, &id).await
@@ -568,6 +592,7 @@ fn restart_app(app: AppHandle) {
     app.restart();
 }
 
+/// this builds the app. the invoke handler gets handed all functions we need to be able to use in our frontend/javascript.
 fn main() {
     tauri::Builder::default()
         // captures new cli process launches as tabs in this instance
@@ -680,6 +705,7 @@ fn main() {
 
             window.show()?;
 
+            //Window movement gets captured and saved for persistence.
             let w = window.clone();
             window.on_window_event(move |e| match e {
                 WindowEvent::Resized(_) => {
