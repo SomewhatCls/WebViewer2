@@ -10,7 +10,7 @@ Finally, the browser has cli support to enable development work, as well as the 
 the syntax for the cli is as follows: "WebViewer2.exe example.com".
 To open the development console, use the shortcut "ctrl+shift+i".
 ### Design
-This browser tries to follow the Fluent 2 design language by Microsoft (https://fluent2.microsoft.design/).
+This browser tries to follow the [Fluent 2](https://fluent2.microsoft.design/) design language by Microsoft.
 To this end, it applies the Mica background effect as long as you are on Windows 11 with transparency turned on. An Example image is attached below.
 
 <img width="2092" height="1524" alt="image" src="https://github.com/user-attachments/assets/c8663b0b-35d7-4c05-872a-684ce91eefb9" />
